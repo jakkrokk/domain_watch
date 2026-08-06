@@ -17,8 +17,12 @@ function openai_chat(string $prompt, string $runId, ?string $model=null): array 
         'messages' => [
             ['role' => 'user', 'content' => $finalPrompt],
         ],
-        'temperature' => 0,
     ];
+
+    // o1/o3/o4 series reasoning models do not support temperature
+    if (!preg_match('~^o[1-9]~', $model)) {
+        //$payload['temperature'] = 0;
+    }
 
     $ch = curl_init($base . '/chat/completions');
     curl_setopt_array($ch, [
@@ -29,7 +33,7 @@ function openai_chat(string $prompt, string $runId, ?string $model=null): array 
             'Content-Type: application/json',
         ],
         CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
-        CURLOPT_TIMEOUT => 60,
+        CURLOPT_TIMEOUT => 360,
     ]);
 
     $t0 = microtime(true);

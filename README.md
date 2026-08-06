@@ -1,6 +1,6 @@
 # domain_watch (prototype)
 
-プロジェクトごとに「メイン1 + サブ最大3」ドメインが、ChatGPT返答内に出現するかを毎時チェックして可視化する（PHP + MySQL）。
+プロジェクトごとに「メイン1 + サブ最大3」ドメインが、ChatGPT返答内に出現するかを1日3回チェックして可視化する（PHP + MySQL）。
 
 ## 0) 前提
 - Ubuntu
@@ -31,6 +31,7 @@ mysql -u domain_watch -p domain_watch < schema.sql
 cp .env.example .env
 nano .env
 ```
+Gemini APIを使う場合は、Google AI StudioでAPIキーを作成し、`.env` の `GEMINI_API_KEY` に設定します。
 
 ### 1-4. 初期ユーザ作成（管理者）
 ```bash
@@ -44,15 +45,21 @@ php -S 0.0.0.0:8000 index.php
 ```
 ブラウザ: `http://<server-ip>:8000/`
 
-## 3) cron（毎時実行）
+## 3) cron（1日3回実行）
 ```bash
 crontab -e
 ```
 ```cron
-0 * * * * cd /home/ubuntu/clawd/domain_watch && /usr/bin/php bin/runner.php >> storage/logs/runner.log 2>&1
+0 0,8,16 * * * cd /home/ubuntu/clawd/domain_watch && /usr/bin/php bin/runner.php >> storage/logs/runner.log 2>&1
 ```
 
 ## 4) 仕様メモ
-- 毎時: 全プロジェクト × 全アクティブプロンプト を実行
-- 23時(ローカル時間): その回だけ response_text を保存
+- 0時 / 8時 / 16時（Asia/Tokyo）: 全プロジェクト × 全アクティブプロンプト を実行
+- daily_logs は1日1枠で、当日の最新 response_text に更新
 
+## 5) Gemini API疎通確認
+`.env` の `GEMINI_API_KEY` 設定後に実行:
+
+```bash
+php bin/test_gemini.php
+```

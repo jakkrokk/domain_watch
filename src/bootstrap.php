@@ -23,4 +23,6 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/html.php';
 require_once __DIR__ . '/domain_match.php';
+require_once __DIR__ . '/schedule.php';
 require_once __DIR__ . '/openai.php';
+require_once __DIR__ . '/gemini.php';

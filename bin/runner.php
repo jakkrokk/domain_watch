@@ -11,7 +11,11 @@ $now = new DateTime('now', $tz);
 $runAt = $now->format('Y-m-d H:00:00');
 $dayKey = $now->format('Y-m-d');
 $hour = (int)$now->format('G');
-$lastHour = (int)(env_get('LAST_HOUR', '23') ?? '23');
+$scheduleHours = runner_schedule_hours();
+if (!in_array($hour, $scheduleHours, true) && env_get('RUNNER_IGNORE_SCHEDULE', '') !== '1') {
+    echo 'skip hour=' . $hour . ' schedule=' . runner_schedule_label() . "\n";
+    exit;
+}
 
 $model = env_get('OPENAI_MODEL', 'gpt-4o-mini');
 
@@ -42,7 +46,7 @@ foreach ($projects as $p) {
     foreach ($prompts as $pr) {
         $promptId = (int)$pr['id'];
 
-        // idempotency: if already ran at this hour for this prompt, skip
+        // idempotency: if already ran at this scheduled slot for this prompt, skip
         $exists = db_one('SELECT id FROM runs WHERE project_id=? AND prompt_id=? AND run_at=?', [$projectId, $promptId, $runAt]);
         if ($exists) { $skipped++; continue; }
 
