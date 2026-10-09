@@ -15,6 +15,7 @@ try {
     echo 'latency_ms=' . $resp['latency_ms'] . "\n";
     echo 'tokens_in=' . ($resp['tokens_in'] ?? '') . "\n";
     echo 'tokens_out=' . ($resp['tokens_out'] ?? '') . "\n";
+    echo 'search_performed=' . ($resp['search_performed'] ? 'yes' : 'no') . "\n";
     echo "text:\n" . trim((string)$resp['text']) . "\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e->getMessage() . "\n");

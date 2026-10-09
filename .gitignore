@@ -1,2 +1,4 @@
 .env
 storage/logs/*.log
+storage/runner.lock
+storage/shots.lock

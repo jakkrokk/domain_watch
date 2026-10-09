@@ -2,9 +2,29 @@
 
 declare(strict_types=1);
 
+if (PHP_SAPI === 'cli-server' && in_array(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH), ['/assets/new-ui.css', '/assets/new-ui.js'], true)) {
+    return false;
+}
+
 require_once __DIR__ . '/../src/bootstrap.php';
 
 $a = $_GET['a'] ?? '';
+if (array_key_exists('newa', $_GET)) {
+    require __DIR__ . '/../src/new_ui.php';
+    exit;
+}
+$provider = (string)($_GET['provider'] ?? 'openai');
+if (!in_array($provider, ['openai', 'gemini'], true)) $provider = 'openai';
+$providerLabel = $provider === 'gemini' ? 'Gemini' : 'ChatGPT';
+function provider_toggle(string $selected, bool $centered = true): void {
+    echo '<div class="provider-toggle' . ($centered ? ' provider-toggle-centered' : '') . '" role="group" aria-label="AIサービス切り替え">';
+    foreach (['openai' => 'ChatGPT', 'gemini' => 'Gemini'] as $value => $label) {
+        $params = $_GET;
+        $params['provider'] = $value;
+        echo '<a href="/?' . h(http_build_query($params)) . '"' . ($selected === $value ? ' aria-current="true"' : '') . '>' . h($label) . '</a>';
+    }
+    echo '</div>';
+}
 if ($a === '') {
     if (auth_user()) redirect('/?a=projects');
     redirect('/?a=login');
@@ -57,6 +77,7 @@ if ($a === 'login') {
         }
         auth_login((int)$u['id']);
         flash_set('ok', 'ログインしました');
+        if (($_GET['newui'] ?? '') === '1') redirect('/?newa');
         redirect('/?a=projects');
     }
     page_header('ログイン');
@@ -84,18 +105,20 @@ if ($a === 'projects') {
     echo '<input type="hidden" name="csrf" value="' . h(csrf_token()) . '">';
     echo '<div class=row><label>新規プロジェクト名</label><br><input name=name required></div>';
     echo '<button type=submit>作成</button></form></div>';
+    echo '<div style="margin:20px 0 24px"><a href="/?newa" style="display:inline-block;font-size:22px;font-weight:700;padding:12px 20px;border:1px solid var(--accent);border-radius:10px;text-decoration:none">新しいUIへ</a></div>';
 
     echo '<div class=card><h2>一覧</h2>';
     if (!$projects) {
         echo '<div>まだプロジェクトがありません。</div>';
     } else {
-        echo '<table><thead><tr><th>ID</th><th>名称</th><th>稼働</th><th>操作</th></tr></thead><tbody>';
+        echo '<table><thead><tr><th>ID</th><th>名称</th><th>稼働</th><th>実行頻度</th><th>操作</th></tr></thead><tbody>';
         $today = (new DateTime('now', new DateTimeZone('Asia/Tokyo')))->format('Y-m-d');
         foreach ($projects as $p) {
             echo '<tr>';
             echo '<td>' . h((string)$p['id']) . '</td>';
             echo '<td><a href="/?a=trends&id=' . h((string)$p['id']) . '">' . h($p['name']) . '</a></td>';
             echo '<td>' . ($p['is_active'] ? 'はい' : 'いいえ') . '</td>';
+            echo '<td>' . h(project_schedule_label($p['run_frequency'] ?? null)) . '</td>';
             echo '<td>';
             echo '<a href="/?a=dashboard&id=' . h((string)$p['id']) . '&date=' . h($today) . '" style="text-decoration:none"><button type="button">詳細（今日）</button></a> ';
             echo '<a href="/?a=project&id=' . h((string)$p['id']) . '" style="text-decoration:none"><button type="button">設定</button></a> ';
@@ -144,6 +167,26 @@ if ($a === 'project_create') {
     redirect('/?a=project&id=' . $pid);
 }
 
+if ($a === 'project_schedule_save') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/?a=projects');
+    csrf_check();
+    $projectId = (int)($_GET['id'] ?? 0);
+    if (!$projectId || !auth_can_access_project($uid, $projectId)) {
+        http_response_code(403);
+        exit('forbidden');
+    }
+
+    $frequency = (string)($_POST['run_frequency'] ?? '');
+    if (!array_key_exists($frequency, project_schedule_frequency_options())) {
+        flash_set('err', '実行頻度が不正です');
+        redirect('/?a=project&id=' . $projectId);
+    }
+
+    db_exec('UPDATE projects SET run_frequency=? WHERE id=?', [$frequency, $projectId]);
+    flash_set('ok', '実行頻度を保存しました');
+    redirect('/?a=project&id=' . $projectId);
+}
+
 if ($a === 'project') {
     $pid = (int)($_GET['id'] ?? 0);
     if (!$pid || !auth_can_access_project($uid, $pid)) {
@@ -162,6 +205,18 @@ if ($a === 'project') {
     echo '<div class=card>';
     echo '<div><a href="/?a=trends&id=' . h((string)$pid) . '">日次トレンド</a> / ' . '<a href="/?a=dashboard&id=' . h((string)$pid) . '&date=' . h($today) . '">詳細（今日）</a></div>';
     echo '</div>';
+
+    echo '<div class=card><h2>実行頻度</h2>';
+    echo '<form method=post action="/?a=project_schedule_save&id=' . h((string)$pid) . '">';
+    echo '<input type="hidden" name="csrf" value="' . h(csrf_token()) . '">';
+    echo '<div class=row><label>検索を実行する頻度</label><br><select name=run_frequency>';
+    $currentFrequency = project_schedule_frequency_normalize($project['run_frequency'] ?? null);
+    foreach (project_schedule_frequency_options() as $value => $label) {
+        $selected = $currentFrequency === $value ? ' selected' : '';
+        echo '<option value="' . h($value) . '"' . $selected . '>' . h(project_schedule_label($value)) . '</option>';
+    }
+    echo '</select></div>';
+    echo '<button type=submit>実行頻度を保存</button></form></div>';
 
     // targets (was domains)
     $hasTargets = count($domains) > 0;
@@ -347,8 +402,8 @@ if ($a === 'trends_csv') {
     $rows = db_all(
         'SELECT day_key, prompt_id, COUNT(*) AS exec_count, ' .
         'SUM(hit_main) AS main_count, SUM(hit_sub1) AS sub1_count, SUM(hit_sub2) AS sub2_count, SUM(hit_sub3) AS sub3_count ' .
-        'FROM runs WHERE project_id=? AND day_key BETWEEN ? AND ? GROUP BY day_key, prompt_id',
-        [$projectId, $start, $end]
+        'FROM runs WHERE project_id=? AND provider=? AND day_key BETWEEN ? AND ? GROUP BY day_key, prompt_id',
+        [$projectId, $provider, $start, $end]
     );
 
     $stats = [];
@@ -357,7 +412,7 @@ if ($a === 'trends_csv') {
     }
 
     $safeProjectName = preg_replace('~[^A-Za-z0-9_-]+~', '_', (string)$project['name']);
-    $filename = 'domain_watch_' . ($safeProjectName ?: ('project_' . $projectId)) . '_' . $start . '_' . $end . '.csv';
+    $filename = 'domain_watch_' . ($safeProjectName ?: ('project_' . $projectId)) . '_' . $provider . '_' . $start . '_' . $end . '.csv';
 
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
@@ -373,6 +428,7 @@ if ($a === 'trends_csv') {
         'project_name',
         'prompt_id',
         'prompt_name',
+        'provider',
         'date',
         'exec_count',
         'main_text',
@@ -395,6 +451,7 @@ if ($a === 'trends_csv') {
                 (string)$project['name'],
                 $promptId,
                 (string)$prompt['name'],
+                $provider,
                 $day,
                 $exec,
                 $mainText,
@@ -458,7 +515,7 @@ if ($a === 'trends') {
     $prompts = db_all('SELECT id,name FROM project_prompts WHERE project_id=? AND is_active=1 ORDER BY id', [$projectId]);
 
     // latest saved RAW (response_text) per prompt
-    $latestRows = db_all('SELECT NULL AS id, prompt_id, day_key, run_at, response_text FROM daily_logs WHERE project_id=? ORDER BY day_key DESC, run_at DESC', [$projectId]);
+    $latestRows = db_all('SELECT NULL AS id, prompt_id, day_key, run_at, response_text FROM daily_logs WHERE project_id=? AND provider=? ORDER BY day_key DESC, run_at DESC', [$projectId, $provider]);
     $latestByPrompt = [];
     foreach ($latestRows as $lr) {
         $pid2 = (int)$lr['prompt_id'];
@@ -469,8 +526,8 @@ if ($a === 'trends') {
     $rows = db_all(
         'SELECT day_key, prompt_id, COUNT(*) AS exec_count, ' .
         'SUM(hit_main) AS main_count, SUM(hit_sub1) AS sub1_count, SUM(hit_sub2) AS sub2_count, SUM(hit_sub3) AS sub3_count ' .
-        'FROM runs WHERE project_id=? AND day_key BETWEEN ? AND ? GROUP BY day_key, prompt_id',
-        [$projectId, $start, $end]
+        'FROM runs WHERE project_id=? AND provider=? AND day_key BETWEEN ? AND ? GROUP BY day_key, prompt_id',
+        [$projectId, $provider, $start, $end]
     );
 
     $byPrompt = [];
@@ -496,15 +553,16 @@ if ($a === 'trends') {
         ];
     }
 
-    page_header('日次トレンド: ' . $project['name']);
+    page_header('日次トレンド: ' . $project['name'] . ' / ' . $providerLabel);
+    provider_toggle($provider);
 
     echo '<div class=card>';
     echo '<form method=get style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap">';
-    echo '<input type=hidden name=a value=trends><input type=hidden name=id value=' . h((string)$projectId) . '>';
+    echo '<input type=hidden name=provider value=' . h($provider) . '><input type=hidden name=a value=trends><input type=hidden name=id value=' . h((string)$projectId) . '>';
     echo '<div><label>Start</label><br><input type=date name=start value="' . h($start) . '"></div>';
     echo '<div><label>End</label><br><input type=date name=end value="' . h($end) . '"></div>';
     echo '<div><button type=submit>表示</button></div>';
-    echo '<div><a href="/?a=trends_csv&id=' . h((string)$projectId) . '&start=' . h($start) . '&end=' . h($end) . '" style="text-decoration:none"><button type="button">CSV DL</button></a></div>';
+    echo '<div><a href="/?a=trends_csv&id=' . h((string)$projectId) . '&provider=' . h($provider) . '&start=' . h($start) . '&end=' . h($end) . '" style="text-decoration:none"><button type="button">CSV DL</button></a></div>';
     echo '</form>';
     echo '<div style="margin-top:8px"><small>棒（または日付リンク）をクリックすると、その日の詳細ページに移動します。</small></div>';
     echo '</div>';
@@ -516,7 +574,7 @@ if ($a === 'trends') {
     }
 
     echo '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>';
-    echo '<script>const LABELS=' . json_encode($labels, JSON_UNESCAPED_UNICODE) . '; const PROJECT_ID=' . (int)$projectId . ';</script>';
+    echo '<script>const PROVIDER=' . json_encode($provider) . '; const LABELS=' . json_encode($labels, JSON_UNESCAPED_UNICODE) . '; const PROJECT_ID=' . (int)$projectId . ';</script>';
 
     $i = 0;
     foreach ($byPrompt as $pid2 => $p) {
@@ -532,31 +590,16 @@ if ($a === 'trends') {
             $seriesSub2[] = $d['sub2_pct'] ?? null;
             $seriesSub3[] = $d['sub3_pct'] ?? null;
         }
-        $mockGeminiSeries = function(array $series, int $offset): array {
-            return array_map(function($value, int $idx) use ($offset) {
-                if ($value === null) return null;
-                $delta = (($idx + $offset) % 5 - 2) * 4;
-                return max(0, min(100, (float)$value + $delta));
-            }, $series, array_keys($series));
-        };
-        $geminiMain = $mockGeminiSeries($seriesMain, 1);
-        $geminiSub1 = $mockGeminiSeries($seriesSub1, 2);
-        $geminiSub2 = $mockGeminiSeries($seriesSub2, 3);
-        $geminiSub3 = $mockGeminiSeries($seriesSub3, 4);
 
         echo '<div class=card>';
         echo '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap">';
         echo '<h2 style="margin-bottom:0">' . h($p['prompt_name'] ?: ('#'.$pid2)) . ' <a href="#" class="latestRaw" data-pid="' . h((string)$pid2) . '" data-name="' . h($p['prompt_name'] ?: ('#'.$pid2)) . '" style="font-size:12px; font-weight:700; margin-left:8px">最新RAW</a></h2>';
-        echo '<div class="provider-toggle" data-chart-id="c' . h((string)$pid2) . '" style="display:inline-flex; border:1px solid rgba(15,15,15,.18); border-radius:6px; overflow:hidden; font-size:12px">';
-        echo '<button type="button" data-provider="chatgpt" class="active" style="border:0; padding:4px 9px; cursor:pointer; background:#111; color:#fff">ChatGPT</button>';
-        echo '<button type="button" data-provider="gemini" style="border:0; border-left:1px solid rgba(15,15,15,.18); padding:4px 9px; cursor:pointer; background:#fff; color:#333">Gemini</button>';
+        provider_toggle($provider);
         echo '</div>';
-        echo '</div>';
-        echo '<div class="provider-note" data-chart-id="c' . h((string)$pid2) . '" style="display:none; color:#777; font-size:11px; margin-top:6px">Geminiはモックデータ表示です。</div>';
         echo '<div><canvas id="c' . h((string)$pid2) . '" height="120"></canvas></div>';
         echo '<div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px">';
         foreach ($labels as $day) {
-            echo '<a href="/?a=dashboard&id=' . h((string)$projectId) . '&date=' . h($day) . '" style="font-size:12px">' . h(substr($day,5)) . '</a>';
+            echo '<a href="/?a=dashboard&id=' . h((string)$projectId) . '&provider=' . h($provider) . '&date=' . h($day) . '" style="font-size:12px">' . h(substr($day,5)) . '</a>';
         }
         echo '</div>';
         echo '<div style="margin-top:8px"><small>期間: ' . h($start) . ' 〜 ' . h($end) . '</small></div>';
@@ -574,19 +617,19 @@ if ($a === 'trends') {
         echo '(() => {';
         echo 'const ctx=document.getElementById(' . json_encode('c'.$pid2) . ');';
         echo 'const chartId=' . json_encode('c'.$pid2) . ';';
-        echo 'const providerData={chatgpt:{main:' . json_encode($seriesMain, JSON_UNESCAPED_UNICODE) . ',sub1:' . json_encode($seriesSub1, JSON_UNESCAPED_UNICODE) . ',sub2:' . json_encode($seriesSub2, JSON_UNESCAPED_UNICODE) . ',sub3:' . json_encode($seriesSub3, JSON_UNESCAPED_UNICODE) . '},gemini:{main:' . json_encode($geminiMain, JSON_UNESCAPED_UNICODE) . ',sub1:' . json_encode($geminiSub1, JSON_UNESCAPED_UNICODE) . ',sub2:' . json_encode($geminiSub2, JSON_UNESCAPED_UNICODE) . ',sub3:' . json_encode($geminiSub3, JSON_UNESCAPED_UNICODE) . '}};';
+        echo 'const chartData={main:' . json_encode($seriesMain) . ',sub1:' . json_encode($seriesSub1) . ',sub2:' . json_encode($seriesSub2) . ',sub3:' . json_encode($seriesSub3) . '};';
         echo 'const projectId=' . (int)$projectId . ';';
         echo 'const chart=new Chart(ctx, {';
         echo 'type:"bar",';
         echo 'data:{labels:LABELS, datasets:[
-  {label:' . json_encode($labelMain !== '' ? $labelMain : 'メイン', JSON_UNESCAPED_UNICODE) . ', data:providerData.chatgpt.main},
-  {label:' . json_encode($labelSub1 !== '' ? $labelSub1 : 'サブ1', JSON_UNESCAPED_UNICODE) . ', data:providerData.chatgpt.sub1},
-  {label:' . json_encode($labelSub2 !== '' ? $labelSub2 : 'サブ2', JSON_UNESCAPED_UNICODE) . ', data:providerData.chatgpt.sub2},
-  {label:' . json_encode($labelSub3 !== '' ? $labelSub3 : 'サブ3', JSON_UNESCAPED_UNICODE) . ', data:providerData.chatgpt.sub3}
+  {label:' . json_encode($labelMain !== '' ? $labelMain : 'メイン', JSON_UNESCAPED_UNICODE) . ', data:chartData.main},
+  {label:' . json_encode($labelSub1 !== '' ? $labelSub1 : 'サブ1', JSON_UNESCAPED_UNICODE) . ', data:chartData.sub1},
+  {label:' . json_encode($labelSub2 !== '' ? $labelSub2 : 'サブ2', JSON_UNESCAPED_UNICODE) . ', data:chartData.sub2},
+  {label:' . json_encode($labelSub3 !== '' ? $labelSub3 : 'サブ3', JSON_UNESCAPED_UNICODE) . ', data:chartData.sub3}
 ]},';
-        echo 'options:{responsive:true, interaction:{mode:"nearest", intersect:true}, plugins:{legend:{display:true}}, scales:{y:{beginAtZero:true, max:100}}, onClick:(evt, els)=>{ if(!els.length) return; const idx=els[0].index; const day=LABELS[idx]; window.location = `/?a=dashboard&id=${projectId}&date=${day}`; }}';
+        echo 'options:{responsive:true, interaction:{mode:"nearest", intersect:true}, plugins:{legend:{display:true}}, scales:{y:{beginAtZero:true, max:100}}, onClick:(evt, els)=>{ if(!els.length) return; const idx=els[0].index; const day=LABELS[idx]; window.location = `/?a=dashboard&id=${projectId}&date=${day}&provider=${PROVIDER}`; }}';
         echo '});';
-        echo 'window.DOMAIN_WATCH_CHARTS=window.DOMAIN_WATCH_CHARTS||{}; window.DOMAIN_WATCH_CHARTS[chartId]={chart, providerData};';
+        echo 'window.DOMAIN_WATCH_CHARTS=window.DOMAIN_WATCH_CHARTS||{}; window.DOMAIN_WATCH_CHARTS[chartId]={chart};';
         echo '})();';
         echo '</script>';
     }
@@ -605,7 +648,6 @@ if ($a === 'trends') {
     echo '<div id="compareOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.20); z-index:9997;"></div>';
 
     echo '<script>';
-    echo 'document.querySelectorAll(".provider-toggle").forEach((toggle)=>{toggle.addEventListener("click",(e)=>{const btn=e.target.closest("button[data-provider]"); if(!btn) return; const chartId=toggle.dataset.chartId; const entry=window.DOMAIN_WATCH_CHARTS&&window.DOMAIN_WATCH_CHARTS[chartId]; if(!entry) return; const provider=btn.dataset.provider; const data=entry.providerData[provider]; entry.chart.data.datasets[0].data=data.main; entry.chart.data.datasets[1].data=data.sub1; entry.chart.data.datasets[2].data=data.sub2; entry.chart.data.datasets[3].data=data.sub3; entry.chart.update(); toggle.querySelectorAll("button").forEach((b)=>{const active=b===btn; b.classList.toggle("active",active); b.style.background=active?"#111":"#fff"; b.style.color=active?"#fff":"#333";}); const note=document.querySelector(`.provider-note[data-chart-id="${chartId}"]`); if(note) note.style.display=provider==="gemini"?"block":"none";});});';
     echo 'function openComparePanel(projectId, promptId, form){const a=form.dateA.value; const b=form.dateB.value; document.getElementById("compareMeta").textContent = `prompt=${promptId}  ${a} vs ${b}`; document.getElementById("compareBody").textContent = "（ここにAI比較結果が出ます：stub）"; document.getElementById("compareOverlay").style.display="block"; document.getElementById("comparePanel").style.right="0px"; return false;}';
     echo 'function closeComparePanel(){document.getElementById("comparePanel").style.right="-520px"; document.getElementById("compareOverlay").style.display="none";}';
     echo 'document.getElementById("compareOverlay").addEventListener("click", closeComparePanel);';
@@ -618,12 +660,12 @@ if ($a === 'trends') {
     echo '<div><strong id="latestRawTitle">RAW</strong> <small id="latestRawMeta" style="margin-left:8px"></small></div>';
     echo '<button type="button" onclick="closeLatestRaw()">閉じる</button>';
     echo '</div>';
-    echo '<div style="padding:14px"><pre id="latestRawBody" style="white-space:pre-wrap"></pre></div>';
+    echo '<div style="padding:14px; max-height:75vh; overflow:auto"><pre id="latestRawBody" style="white-space:pre-wrap"></pre><iframe id="latestSearchSuggestions" title="Google検索の候補" sandbox="allow-popups allow-popups-to-escape-sandbox" style="display:none; width:100%; height:180px; border:0"></iframe></div>';
     echo '</div>';
     echo '</div>';
 
     echo '<script>';
-    echo 'async function _openLatestRaw(promptId, promptName){const m=document.getElementById("latestRawModal"); const t=document.getElementById("latestRawTitle"); const meta=document.getElementById("latestRawMeta"); const b=document.getElementById("latestRawBody"); t.textContent="RAW: "+promptName; meta.textContent=""; b.textContent="読み込み中..."; m.style.display="block"; try{const res=await fetch("/?a=latest_raw&id="+PROJECT_ID+"&prompt_id="+encodeURIComponent(promptId)); const j=await res.json(); const row=j.row; if(!row){meta.textContent="（保存RAWなし）"; b.textContent=""; return;} meta.textContent = (row.day_key||"") + " " + (row.run_at||""); b.textContent = row.response_text || "";} catch(e){meta.textContent="（取得失敗）"; b.textContent=String(e);} }';
+    echo 'async function _openLatestRaw(promptId, promptName){const m=document.getElementById("latestRawModal"); const t=document.getElementById("latestRawTitle"); const meta=document.getElementById("latestRawMeta"); const b=document.getElementById("latestRawBody"); t.textContent="RAW: "+promptName; meta.textContent=""; b.textContent="読み込み中..."; const suggestions=document.getElementById("latestSearchSuggestions"); suggestions.style.display="none"; suggestions.srcdoc=""; m.style.display="block"; try{const res=await fetch("/?a=latest_raw&id="+PROJECT_ID+"&prompt_id="+encodeURIComponent(promptId)+"&provider="+encodeURIComponent(PROVIDER)); const j=await res.json(); const row=j.row; if(!row){meta.textContent="（保存RAWなし）"; b.textContent=""; return;} meta.textContent = (row.day_key||"") + " " + (row.run_at||""); b.textContent = row.response_text || ""; if(row.search_suggestions){suggestions.srcdoc=row.search_suggestions; suggestions.style.display="block";}} catch(e){meta.textContent="（取得失敗）"; b.textContent=String(e);} }';
     echo 'function closeLatestRaw(){document.getElementById("latestRawModal").style.display="none";}';
     echo 'document.querySelectorAll("a.latestRaw").forEach(a=>a.addEventListener("click",(e)=>{e.preventDefault(); _openLatestRaw(a.dataset.pid, a.dataset.name);}));';
     echo 'document.getElementById("latestRawModal").addEventListener("click", (e)=>{if(e.target.id==="latestRawModal") closeLatestRaw();});';
@@ -640,17 +682,19 @@ if ($a === 'dashboard') {
     if (!preg_match('~^\d{4}-\d{2}-\d{2}$~', $date)) {
         $date = (new DateTime('now', new DateTimeZone('Asia/Tokyo')))->format('Y-m-d');
     }
-    $project = db_one('SELECT * FROM projects WHERE id=?', [$projectId]);
     $tz = new DateTimeZone('Asia/Tokyo');
+    $project = db_one('SELECT * FROM projects WHERE id=?', [$projectId]);
     $today = (new DateTime('now', $tz))->format('Y-m-d');
-    $scheduleHours = runner_schedule_hours();
+    $dashboardDate = new DateTime($date . ' 00:00:00', $tz);
+    $scheduleHours = project_schedule_hours_for_date($project['run_frequency'] ?? null, $dashboardDate);
 
-    page_header('詳細: ' . $project['name'] . ' / ' . $date);
-    echo '<div><a href="/?a=project&id=' . h((string)$projectId) . '">戻る</a> / <a href="/?a=trends&id=' . h((string)$projectId) . '">日次トレンド</a></div>';
+    page_header('詳細: ' . $project['name'] . ' / ' . $date . ' / ' . $providerLabel);
+    provider_toggle($provider);
+    echo '<div><a href="/?a=project&id=' . h((string)$projectId) . '">戻る</a> / <a href="/?a=trends&id=' . h((string)$projectId) . '&provider=' . h($provider) . '">日次トレンド</a></div>';
 
     echo '<div class=card>';
     echo '<form method=get style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap">';
-    echo '<input type=hidden name=a value=dashboard><input type=hidden name=id value=' . h((string)$projectId) . '>';
+    echo '<input type=hidden name=provider value=' . h($provider) . '><input type=hidden name=a value=dashboard><input type=hidden name=id value=' . h((string)$projectId) . '>';
     echo '<div><label>Date</label><br><input type=date name=date value="' . h($date) . '"></div>';
     echo '<div><button type=submit>表示</button></div>';
     echo '</form>';
@@ -658,14 +702,17 @@ if ($a === 'dashboard') {
 
 
     $prompts = db_all('SELECT id,name FROM project_prompts WHERE project_id=? AND is_active=1 ORDER BY id', [$projectId]);
-    $runs = db_all('SELECT * FROM runs WHERE project_id=? AND day_key=? ORDER BY hour ASC, prompt_id ASC', [$projectId, $date]);
+    $runs = db_all('SELECT * FROM runs WHERE project_id=? AND provider=? AND day_key=? ORDER BY hour ASC, prompt_id ASC', [$projectId, $provider, $date]);
+    // Also show measurements triggered manually outside scheduled hours.
+    $displayHours = array_values(array_unique(array_merge($scheduleHours, array_map(fn($run) => (int)$run['hour'], $runs))));
+    sort($displayHours, SORT_NUMERIC);
 
     $trows = db_all("SELECT type,domain FROM project_domains WHERE project_id=? ORDER BY FIELD(type,'main','sub'), id", [$projectId]);
     $labelMainDash = '';
     foreach ($trows as $tr) { if ($tr['type'] === 'main') { $labelMainDash = (string)$tr['domain']; break; } }
 
     // saved log (1/day) per prompt: overwritten each run, so it keeps the latest text for that day
-    $savedRows = db_all('SELECT NULL AS id, prompt_id, run_at, response_text FROM daily_logs WHERE project_id=? AND day_key=? ORDER BY run_at DESC', [$projectId, $date]);
+    $savedRows = db_all('SELECT NULL AS id, prompt_id, run_at, response_text, search_suggestions FROM daily_logs WHERE project_id=? AND provider=? AND day_key=? ORDER BY run_at DESC', [$projectId, $provider, $date]);
     $savedByPrompt = [];
     foreach ($savedRows as $sr) {
         $pid2 = (int)$sr['prompt_id'];
@@ -783,12 +830,8 @@ if ($a === 'dashboard') {
 
             echo '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px">';
             echo '<h3 style="margin:0">' . h($pname ?: ('#'.$pid2)) . '</h3>';
-            echo '<div class="dashboard-provider-toggle" data-prompt-id="' . h((string)$pid2) . '" style="display:inline-flex; border:1px solid rgba(15,15,15,.18); border-radius:6px; overflow:hidden; font-size:12px">';
-            echo '<button type="button" data-provider="chatgpt" class="active" style="border:0; padding:4px 9px; cursor:pointer; background:#111; color:#fff">ChatGPT</button>';
-            echo '<button type="button" data-provider="gemini" style="border:0; border-left:1px solid rgba(15,15,15,.18); padding:4px 9px; cursor:pointer; background:#fff; color:#333">Gemini</button>';
+            provider_toggle($provider, false);
             echo '</div>';
-            echo '</div>';
-            echo '<div class="dashboard-provider-note" data-prompt-id="' . h((string)$pid2) . '" style="display:none; color:#777; font-size:11px; margin-top:6px">Geminiはモックデータ表示です。</div>';
             echo '<div style="display:flex; gap:16px; align-items:flex-start">';
 
             // left: scheduled slot table
@@ -804,7 +847,7 @@ if ($a === 'dashboard') {
             }
             echo '</tr></thead><tbody>';
 
-            foreach ($scheduleHours as $h) {
+            foreach ($displayHours as $h) {
                 $r = $byHour[$h] ?? null;
                 echo '<tr data-provider-row="1" data-prompt-id="' . h((string)$pid2) . '">';
                 echo '<td>' . sprintf('%02d:00', $h) . '</td>';
@@ -829,8 +872,7 @@ if ($a === 'dashboard') {
                 echo '<td style="background:#eaffea">済</td>';
 
                 $isMain = ((int)$r['hit_main'] === 1);
-                $mockMain = ((int)$r['hour'] + $pid2) % 3 === 0 ? !$isMain : $isMain;
-                echo '<td class="provider-cell" data-chatgpt-text="' . h($isMain ? 'hit' : '-') . '" data-chatgpt-hit="' . ($isMain ? '1' : '0') . '" data-gemini-text="' . h($mockMain ? 'hit' : '-') . '" data-gemini-hit="' . ($mockMain ? '1' : '0') . '" style="background:' . ($isMain ? '#eaffea' : '#fff7e6') . '">' . ($isMain ? 'hit' : '-') . '</td>';
+                echo '<td style="background:' . ($isMain ? '#eaffea' : '#fff7e6') . '">' . ($isMain ? 'hit' : '-') . '</td>';
 
                 $hits = $r['hit_sub'] ? json_decode($r['hit_sub'], true) : [];
                 if (!is_array($hits)) $hits = [];
@@ -838,8 +880,7 @@ if ($a === 'dashboard') {
                 if ($subs) {
                     foreach ($subs as $s) {
                         $hit = in_array($s, $hits, true);
-                        $mockHit = ((int)$r['hour'] + $pid2 + strlen($s)) % 4 === 0 ? !$hit : $hit;
-                        echo '<td class="provider-cell" data-chatgpt-text="' . h($hit ? 'hit' : '-') . '" data-chatgpt-hit="' . ($hit ? '1' : '0') . '" data-gemini-text="' . h($mockHit ? 'hit' : '-') . '" data-gemini-hit="' . ($mockHit ? '1' : '0') . '" style="background:' . ($hit ? '#eaffea' : '#fff7e6') . '">' . ($hit ? 'hit' : '-') . '</td>';
+                        echo '<td style="background:' . ($hit ? '#eaffea' : '#fff7e6') . '">' . ($hit ? 'hit' : '-') . '</td>';
                     }
                 } else {
                     echo '<td>-</td>';
@@ -855,9 +896,14 @@ if ($a === 'dashboard') {
             $latestLog = $savedByPrompt[$pid2] ?? null;
             echo '<div style="flex:1; min-width:0">';
             if ($latestLog && ($latestLog['response_text'] ?? '') !== '') {
-                echo '<div style="font-size:11px; color:#888; margin-bottom:4px">最新RAW' . ($latestLog['run_at'] ? ' (' . h((string)$latestLog['run_at']) . ')' : '') . '</div>';
-                echo '<pre class="raw-preview" style="white-space:pre-wrap; font-size:12px; line-height:1.45; background:#f9f9f9; border:1px solid rgba(15,15,15,.1); border-radius:6px; padding:10px; margin:0; max-height:calc(10lh + 20px); overflow:auto">' . h((string)$latestLog['response_text']) . '</pre>';
+                $rawId = 'raw-preview-' . $pid2;
+                echo '<div class="raw-heading"><span>最新RAW' . ($latestLog['run_at'] ? ' (' . h((string)$latestLog['run_at']) . ')' : '') . '</span><button type="button" class="raw-copy" data-copy-target="' . h($rawId) . '" aria-label="' . h($pname ?: ('#'.$pid2)) . 'の最新RAWをコピー">コピー</button><span class="raw-copy-status" role="status" aria-live="polite"></span></div>';
+                echo '<pre id="' . h($rawId) . '" class="raw-preview" style="white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.45; background:#f9f9f9; border:1px solid rgba(15,15,15,.1); border-radius:6px; padding:10px; margin:0; max-height:calc(10lh + 20px); overflow:auto">' . h((string)$latestLog['response_text']) . '</pre>';
                 echo '<button type="button" class="raw-toggle" style="display:inline; margin-top:4px; padding:0; border:0; background:transparent; color:#2563eb; font-size:11px; text-decoration:underline; cursor:pointer">全文を表示</button>';
+                if (!empty($latestLog['search_suggestions'])) {
+                    echo '<div style="font-size:11px; color:#888; margin-top:8px">Google検索候補（Geminiが検索時に返したリンク）<br>RAW末尾の検索クエリ・参照URL・引用URLは、Geminiの検索情報です。参照URLはGoogle経由のリンクになっています。</div>';
+                    echo '<iframe title="Google検索の候補" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="' . h($latestLog['search_suggestions']) . '" style="width:100%; height:180px; border:0"></iframe>';
+                }
             } else {
                 echo '<div style="font-size:12px; color:#aaa; padding:8px 0">（この日のRAWなし）</div>';
             }
@@ -866,7 +912,7 @@ if ($a === 'dashboard') {
             echo '</div>'; // flex wrapper
         }
 
-        echo '<div style="color:#666; font-size:11px; margin-top:8px">実行時刻: ' . h(runner_schedule_label()) . ' / 凡例：済=実行あり / 未=実行なし（過去の時間） / なし=未取得（今日の未来時間）</div>';
+        echo '<div style="color:#666; font-size:11px; margin-top:8px">実行頻度: ' . h(project_schedule_label($project['run_frequency'] ?? null)) . ' / 凡例：済=実行あり / 未=実行なし（過去の時間） / なし=未取得（今日の未来時間）</div>';
     }
 
 
@@ -882,7 +928,46 @@ if ($a === 'dashboard') {
     echo '</div>';
 
     echo '<script>';
-    echo 'document.querySelectorAll(".dashboard-provider-toggle").forEach((toggle)=>{toggle.addEventListener("click",(e)=>{const btn=e.target.closest("button[data-provider]"); if(!btn) return; const provider=btn.dataset.provider; const promptId=toggle.dataset.promptId; toggle.querySelectorAll("button").forEach((b)=>{const active=b===btn; b.classList.toggle("active",active); b.style.background=active?"#111":"#fff"; b.style.color=active?"#fff":"#333";}); document.querySelectorAll(`tr[data-provider-row="1"][data-prompt-id="${promptId}"] .provider-cell`).forEach((cell)=>{const text=cell.dataset[provider+"Text"]||"-"; const hit=cell.dataset[provider+"Hit"]==="1"; cell.textContent=text; cell.style.background=hit?"#eaffea":"#fff7e6";}); const note=document.querySelector(`.dashboard-provider-note[data-prompt-id="${promptId}"]`); if(note) note.style.display=provider==="gemini"?"block":"none";});});';
+    echo <<<'JS'
+document.querySelectorAll('.raw-copy').forEach((button) => {
+    button.addEventListener('click', async () => {
+        const raw = document.getElementById(button.dataset.copyTarget);
+        const status = button.nextElementSibling;
+        if (!raw) return;
+        button.disabled = true;
+        status.textContent = '';
+        const fallbackCopy = () => {
+            const field = document.createElement('textarea');
+            field.value = raw.textContent;
+            field.readOnly = true;
+            field.style.position = 'fixed';
+            field.style.left = '-9999px';
+            document.body.appendChild(field);
+            try {
+                field.focus();
+                field.select();
+                if (!document.execCommand('copy')) throw new Error('Copy failed');
+            } finally {
+                field.remove();
+                button.focus({preventScroll: true});
+            }
+        };
+        try {
+            if (window.isSecureContext && navigator.clipboard?.writeText) {
+                try { await navigator.clipboard.writeText(raw.textContent); }
+                catch { fallbackCopy(); }
+            } else {
+                fallbackCopy();
+            }
+            status.textContent = 'コピーしました';
+        } catch {
+            status.textContent = 'コピーできませんでした。本文を選択してコピーしてください。';
+        } finally {
+            button.disabled = false;
+        }
+    });
+});
+JS;
     echo 'document.querySelectorAll(".raw-toggle").forEach((btn)=>{btn.addEventListener("click",()=>{const p=btn.previousElementSibling; if(!p) return; const open=p.dataset.open==="1"; p.dataset.open=open?"0":"1"; p.style.maxHeight=open ? "calc(10lh + 20px)" : "520px"; btn.textContent=open ? "全文を表示" : "閉じる";});});';
     echo 'const SAVED_BY_PROMPT=' . json_encode($savedByPrompt, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';';
     echo 'function openLogModal(promptId, promptName){const m=document.getElementById("logModal"); const t=document.getElementById("logModalTitle"); const meta=document.getElementById("logModalMeta"); const b=document.getElementById("logModalBody"); const row=SAVED_BY_PROMPT[String(promptId)] || SAVED_BY_PROMPT[promptId]; if(!row){t.textContent=`ログ: ${promptName}`; meta.textContent="（この日はログなし）"; b.textContent=""; } else {t.textContent=`ログ: ${promptName}`; meta.textContent=row.run_at ? `(${row.run_at})` : ""; b.textContent=row.response_text || "";} m.style.display="block"; }';
@@ -900,8 +985,8 @@ if ($a === 'latest_raw') {
     if (!$projectId || !$promptId || !auth_can_access_project($uid, $projectId)) { http_response_code(404); exit('not found'); }
 
     header('Content-Type: application/json; charset=utf-8');
-    $row = db_one('SELECT day_key, run_at, response_text FROM daily_logs WHERE project_id=? AND prompt_id=? ORDER BY day_key DESC, run_at DESC LIMIT 1', [$projectId, $promptId]);
-    echo json_encode(['project_id'=>$projectId,'prompt_id'=>$promptId,'row'=>$row], JSON_UNESCAPED_UNICODE);
+    $row = db_one('SELECT day_key, run_at, response_text, search_suggestions FROM daily_logs WHERE project_id=? AND prompt_id=? AND provider=? ORDER BY day_key DESC, run_at DESC LIMIT 1', [$projectId, $promptId, $provider]);
+    echo json_encode(['project_id'=>$projectId,'prompt_id'=>$promptId,'provider'=>$provider,'row'=>$row], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -914,8 +999,8 @@ if ($a === 'raw') {
     }
 
     header('Content-Type: application/json; charset=utf-8');
-    $runs = db_all('SELECT * FROM runs WHERE project_id=? AND day_key=? ORDER BY hour ASC, prompt_id ASC', [$projectId, $date]);
-    echo json_encode(['project_id'=>$projectId,'date'=>$date,'runs'=>$runs], JSON_UNESCAPED_UNICODE);
+    $runs = db_all('SELECT * FROM runs WHERE project_id=? AND provider=? AND day_key=? ORDER BY hour ASC, prompt_id ASC', [$projectId, $provider, $date]);
+    echo json_encode(['project_id'=>$projectId,'date'=>$date,'provider'=>$provider,'runs'=>$runs], JSON_UNESCAPED_UNICODE);
     exit;
 }
 

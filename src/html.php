@@ -114,6 +114,15 @@ button{
   cursor:pointer;
 }
 button:hover{border-color:rgba(15,15,15,.26)}
+.provider-toggle{display:inline-flex; align-items:center; gap:8px;}
+.provider-toggle-centered{display:flex; justify-content:center; margin:0 0 12px;}
+.provider-toggle a{display:inline-flex; align-items:center; justify-content:center; min-width:96px; padding:8px 16px; border:1px solid var(--border); border-radius:10px; background:var(--panel); color:var(--muted); font-size:13px; font-weight:600; text-decoration:none;}
+.provider-toggle a:hover{border-color:var(--accent); color:var(--accent);}
+.provider-toggle a[aria-current=true]{background:var(--accent); border-color:var(--accent); color:#fff;}
+.raw-heading{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:11px; color:#888; margin-bottom:4px;}
+.raw-copy{padding:3px 8px; border-radius:6px; font-size:11px; color:var(--accent);}
+.raw-copy:disabled{cursor:wait; opacity:.6;}
+.raw-copy-status{color:var(--muted);}
 
 a{color:var(--accent)}
 
@@ -155,6 +164,7 @@ CSS;
         echo '<div class="nav">';
         if (auth_user()) {
             echo '<a href="/?a=projects">プロジェクト</a>';
+            echo '<a href="/?newa=shots">ショット</a>';
             echo '<a href="/?a=logout">ログアウト</a>';
         } else {
             echo '<a href="/?a=login">ログイン</a>';

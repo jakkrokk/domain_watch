@@ -2,6 +2,38 @@
 
 declare(strict_types=1);
 
+function gemini_parse_output(array $data): array {
+    $candidate = $data['candidates'][0] ?? [];
+    $texts = [];
+    foreach (($candidate['content']['parts'] ?? []) as $part) {
+        if (isset($part['text']) && empty($part['thought'])) $texts[] = (string)$part['text'];
+    }
+    $answer = trim(implode('', $texts));
+    if ($answer === '') {
+        throw new RuntimeException('Gemini returned no answer: ' . ($data['promptFeedback']['blockReason'] ?? $candidate['finishReason'] ?? 'missing candidate'));
+    }
+    $metadata = $candidate['groundingMetadata'] ?? [];
+    $sources = [];
+    $citations = [];
+    foreach (($metadata['groundingChunks'] ?? []) as $chunk) {
+        if (isset($chunk['web']['uri'])) $sources[] = $chunk['web']['uri'];
+    }
+    foreach (($metadata['groundingSupports'] ?? []) as $support) {
+        foreach (($support['groundingChunkIndices'] ?? []) as $index) {
+            $uri = $metadata['groundingChunks'][$index]['web']['uri'] ?? null;
+            if ($uri) $citations[] = $uri;
+        }
+    }
+    return [
+        'answer_text' => $answer,
+        'search_queries' => openai_unique_strings($metadata['webSearchQueries'] ?? []),
+        'source_urls' => openai_unique_strings($sources),
+        'citation_urls' => openai_unique_strings($citations),
+        'search_performed' => !empty($metadata['webSearchQueries']),
+        'search_suggestions' => $metadata['searchEntryPoint']['renderedContent'] ?? null,
+    ];
+}
+
 function gemini_chat(string $prompt, string $runId, ?string $model=null): array {
     $apiKey = env_get('GEMINI_API_KEY');
     if (!$apiKey) throw new RuntimeException('GEMINI_API_KEY not set');
@@ -22,6 +54,8 @@ function gemini_chat(string $prompt, string $runId, ?string $model=null): array 
             ],
         ],
     ];
+    $webSearch = openai_env_enabled('GEMINI_WEB_SEARCH', true);
+    if ($webSearch) $payload['tools'] = [['google_search' => new stdClass()]];
 
     $ch = curl_init($base . '/models/' . rawurlencode($model) . ':generateContent');
     curl_setopt_array($ch, [
@@ -55,18 +89,13 @@ function gemini_chat(string $prompt, string $runId, ?string $model=null): array 
         throw new RuntimeException('Gemini error: ' . $msg);
     }
 
-    $parts = $data['candidates'][0]['content']['parts'] ?? [];
-    $texts = [];
-    if (is_array($parts)) {
-        foreach ($parts as $part) {
-            if (isset($part['text'])) $texts[] = (string)$part['text'];
-        }
-    }
-    $text = implode('', $texts);
+    $parsed = gemini_parse_output($data);
+    $text = $webSearch ? openai_format_web_search_text($parsed['answer_text'], $parsed['search_queries'], $parsed['source_urls'], $parsed['citation_urls']) : $parsed['answer_text'];
 
     return [
+        ...$parsed,
         'text' => $text,
-        'model' => $model,
+        'model' => $data['modelVersion'] ?? $model,
         'latency_ms' => $ms,
         'tokens_in' => $data['usageMetadata']['promptTokenCount'] ?? null,
         'tokens_out' => $data['usageMetadata']['candidatesTokenCount'] ?? null,
