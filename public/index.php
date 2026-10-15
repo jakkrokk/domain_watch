@@ -8,6 +8,11 @@ if (PHP_SAPI === 'cli-server' && in_array(parse_url($_SERVER['REQUEST_URI'] ?? '
 
 require_once __DIR__ . '/../src/bootstrap.php';
 
+if (parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) === '/content-generation') {
+    require __DIR__ . '/../src/content_generation_ui.php';
+    exit;
+}
+
 $a = $_GET['a'] ?? '';
 if (array_key_exists('newa', $_GET)) {
     require __DIR__ . '/../src/new_ui.php';
@@ -77,6 +82,7 @@ if ($a === 'login') {
         }
         auth_login((int)$u['id']);
         flash_set('ok', 'ログインしました');
+        if (($_GET['return'] ?? '') === 'content-generation') redirect('/content-generation');
         if (($_GET['newui'] ?? '') === '1') redirect('/?newa');
         redirect('/?a=projects');
     }

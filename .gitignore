@@ -2,3 +2,6 @@
 storage/logs/*.log
 storage/runner.lock
 storage/shots.lock
+storage/content-generation/
+storage/content-venv/
+storage/content-generation.lock

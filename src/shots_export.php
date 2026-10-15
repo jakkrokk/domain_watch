@@ -1,13 +1,61 @@
 <?php
 declare(strict_types=1);
 
-// Match the regular project's RAW CSV columns. Shots have their own IDs, and
-// prompt_index identifies a prompt across providers within the same shot.
+require_once __DIR__ . '/answer_raw.php';
+require_once __DIR__ . '/domain_match.php';
+
+function shot_export_mentions(string $answer, string $target): array {
+    $target = normalize_target_text($target);
+    if ($target === '') return ['', ''];
+    $count = mb_substr_count(_ci($answer), _ci($target), 'UTF-8');
+    $locations = [];
+    foreach (preg_split('/\R/u', $answer) ?: [] as $i => $line) {
+        if (text_contains_target($line, $target)) $locations[] = '行' . ($i+1) . '：' . $line;
+    }
+    return [$count, implode("\n", $locations)];
+}
+
+function shot_export_site_host(string $site): ?string {
+    $site = normalize_target_text($site);
+    if ($site === '') return null;
+    $url = str_contains($site, '://') ? $site : 'https://' . $site;
+    $parts = parse_url($url);
+    if (!$parts || !in_array(strtolower($parts['scheme'] ?? ''), ['http','https'], true) || empty($parts['host'])) return null;
+    $host = strtolower(rtrim($parts['host'], '.'));
+    if (preg_match('/[^\x00-\x7F]/', $host)) {
+        if (!function_exists('idn_to_ascii')) return null;
+        $host = idn_to_ascii($host);
+        if ($host === false) return null;
+    }
+    if (!str_contains($host, '.') || !filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) return null;
+    return preg_replace('/^www\./', '', $host);
+}
+
+function shot_export_site_citation(?array $citations, string $site): array {
+    $siteHost = shot_export_site_host($site);
+    if ($siteHost === null || $citations === null) return ['', ''];
+    $unknown = false;
+    foreach ($citations as $i => $url) {
+        $host = shot_export_site_host($url);
+        // Google grounding redirects do not identify the original cited site.
+        $opaque = $host === 'vertexaisearch.cloud.google.com'
+            || ($host === 'google.com' && parse_url($url, PHP_URL_PATH) === '/url');
+        if ($host === null || $opaque) { $unknown = true; continue; }
+        if ($host === $siteHost || str_ends_with($host, '.' . $siteHost)) return ['TRUE', $unknown ? '' : $i+1];
+    }
+    return [$unknown ? '' : 'FALSE', ''];
+}
+
+// AnswerIO's 26-column report. Unknown classifications and scores stay blank.
 function shot_export_csv(array $shot, array $results): string {
     $subs = json_decode($shot['target_sub_texts'], true, 512, JSON_THROW_ON_ERROR);
-    $subCount = max(3, count($subs));
-    $header = ['project_id','project_name','prompt_id','prompt_name','provider','date','exec_count','main_text','main_rate_pct'];
-    for ($i=1; $i<=$subCount; $i++) array_push($header, 'sub' . $i . '_text', 'sub' . $i . '_rate_pct');
+    $header = [
+        'レポート実行ID','実行日時','ファネル段階','クエリID','クエリテキスト','クエリタイプ',
+        'AIモデル','モデルバージョン','回答テキスト','可視性スコア','プレゼンススコア','ポジションスコア',
+        '引用スコア','ブランド順位','言及有無','言及回数','言及箇所','抽出ブランド一覧','競合ブランド一覧',
+        '抽出された特徴','引用サイト数','引用サイトURL一覧','自社サイト引用有無','自社サイト引用順位',
+        '実行ステータス','エラー内容',
+    ];
     usort($results, static fn($a, $b) => ((int)$a['prompt_index'] <=> (int)$b['prompt_index']) ?: strcmp($a['provider'], $b['provider']));
 
     $out = fopen('php://temp', 'w+b');
@@ -18,16 +66,22 @@ function shot_export_csv(array $shot, array $results): string {
         fputcsv($out, $header, ',', '"', '', "\r\n");
         foreach ($results as $result) {
             $completed = $result['status'] === 'completed';
-            $hits = $completed ? json_decode($result['hit_sub'], true, 512, JSON_THROW_ON_ERROR) : [];
+            [$answer, $info] = $completed ? answer_split_raw($result['response_text'] ?? '') : ['', []];
+            $hasAnswer = $completed && trim($answer) !== '';
+            [$mentionCount, $mentionLocations] = $hasAnswer ? shot_export_mentions($answer, $shot['target_main_text']) : ['', ''];
+            $citations = array_key_exists('回答で引用したURL', $info) ? array_values(array_unique(array_map('trim', $info['回答で引用したURL']))) : null;
+            [$ownSiteCited, $ownSiteRank] = shot_export_site_citation($citations, $shot['target_main_text']);
+            $datetime = empty($result['finished_at']) ? '' : (new DateTimeImmutable($result['finished_at'], new DateTimeZone('Asia/Tokyo')))->format('Y-m-d\TH:i:sP');
+            $status = ['completed'=>'成功','failed'=>'失敗','running'=>'実行中','queued'=>'未実行'][$result['status']] ?? $result['status'];
             $row = [
-                (int)$shot['id'], $shot['name'], (int)$result['prompt_index'], $result['prompt_content'],
-                $result['provider'], substr($result['finished_at'] ?? $shot['created_at'], 0, 10),
-                $completed ? 1 : 0, $shot['target_main_text'], $completed ? (int)$result['hit_main'] * 100 : '',
+                'shot-' . (int)$shot['id'], $datetime, '',
+                'shot-' . (int)$shot['id'] . '-prompt-' . (int)$result['prompt_index'], $result['prompt_content'], '',
+                $result['provider'], $result['model'] ?? '', $answer, '', '', '', '', '',
+                $completed && isset($result['hit_main']) ? ((int)$result['hit_main'] ? 'TRUE' : 'FALSE') : '',
+                $mentionCount, $mentionLocations, '', implode(', ', $subs), '',
+                $citations === null ? '' : count($citations), $citations === null ? '' : implode(', ', $citations),
+                $ownSiteCited, $ownSiteRank, $status, $result['error_message'] ?? '',
             ];
-            for ($i=0; $i<$subCount; $i++) {
-                $row[] = $subs[$i] ?? '';
-                $row[] = $completed && isset($subs[$i], $hits[$i]) ? (int)$hits[$i] * 100 : '';
-            }
             fputcsv($out, $row, ',', '"', '', "\r\n");
         }
         rewind($out);

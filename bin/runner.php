@@ -132,8 +132,9 @@ foreach ($projects as $p) {
                     [$projectId, $promptId, $provider, $dayKey, $runAt, $text, $resp['search_suggestions'] ?? null]
                 );
 
-                // runs: keep hourly metrics; do NOT store full text here (avoid volume)
-                $saveText = null;
+                // Keep the exact answer when a competitor appeared, so a later
+                // daily response cannot overwrite the evidence for that hit.
+                $saveText = $hitSubs ? $text : null;
 
                 db_exec(
                     'INSERT INTO runs(project_id,prompt_id,provider,run_at,day_key,hour,target_main_text,target_sub1_text,target_sub2_text,target_sub3_text,target_sub_texts,hit_main,hit_sub1,hit_sub2,hit_sub3,hit_sub,response_text,model,tokens_in,tokens_out,latency_ms,search_performed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',

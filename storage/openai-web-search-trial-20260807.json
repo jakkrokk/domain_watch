@@ -1,0 +1,301 @@
+{
+    "id": "resp_0cdf8192f51a5926016a75268504088198b28436e828d5c239",
+    "object": "response",
+    "created_at": 1786062469,
+    "status": "completed",
+    "background": false,
+    "billing": {
+        "payer": "developer"
+    },
+    "completed_at": 1786062476,
+    "error": null,
+    "frequency_penalty": 0,
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": 800,
+    "max_tool_calls": null,
+    "model": "gpt-5.6-terra",
+    "moderation": null,
+    "output": [
+        {
+            "id": "ws_0cdf8192f51a5926016a752685a22081989586be37b3ccbbaa",
+            "type": "web_search_call",
+            "status": "completed",
+            "action": {
+                "type": "search",
+                "queries": [
+                    "日本 SEO会社 実績 公式 SEOコンサルティング",
+                    "SEO会社 おすすめ 日本 公式 事例 SEO支援"
+                ],
+                "query": "日本 SEO会社 実績 公式 SEOコンサルティング",
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": "https://seojapan.com/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://misuzuya.co.jp/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://find-a.jp/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.plan-b.co.jp/blog/seo/63159/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://seo-pro.co.jp/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://webanalytics.speee.jp/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://challenge-seo.jp/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://webanalytics.speee.jp/media/article/seo-consulting-results/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://backlink.co.jp/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.geo-code.co.jp/seo/mag/tokyo-seo/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://rank-quest.jp/column/column/nihon-seo/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://mediareach.co.jp/"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://seojapan.com/wp-content/uploads/2026/01/5728d29e83edaa284f6176476733b9cf.pdf"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://finance-frontend-pc-dist.west.edge.storage-yahoo.jp/disclosure/20240312/20240312551980.pdf"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://lucy.ne.jp/bazubu/pdf/bazubu-7-questions-ebook.pdf"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.switchitmaker2.com/download/50030/?tmstv=1782641110"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://arxiv.org/abs/2506.11097"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://arxiv.org/abs/2505.21021"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/xjy09o"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/1mwyqmf"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/xjw7u7"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/yydpq8"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://arxiv.org/abs/1006.4558"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://arxiv.org/abs/2301.10105"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/wn6yix"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/wn7avy"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/vh8kk1"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/xjv5pc"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_matida0412/comments/wnzn0f"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://www.reddit.com/r/u_webdesignnova/comments/15xx4tj"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://webanalytics.speee.jp/?utm_source=openai"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://seojapan.com/?utm_source=openai"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://misuzuya.co.jp/?utm_source=openai"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://challenge-seo.jp/?utm_source=openai"
+                    },
+                    {
+                        "type": "url",
+                        "url": "https://find-a.jp/?utm_source=openai"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "msg_0cdf8192f51a5926016a75268884e08198992652b8f9676629",
+            "type": "message",
+            "status": "completed",
+            "content": [
+                {
+                    "type": "output_text",
+                    "annotations": [
+                        {
+                            "type": "url_citation",
+                            "end_index": 219,
+                            "start_index": 144,
+                            "title": "SEOコンサルティング｜株式会社Speee",
+                            "url": "https://webanalytics.speee.jp/?utm_source=openai"
+                        },
+                        {
+                            "type": "url_citation",
+                            "end_index": 395,
+                            "start_index": 338,
+                            "title": "SEO Japan（アイオイクス）｜LLMO・AI検索最適化 × SEOコンサルティング",
+                            "url": "https://seojapan.com/?utm_source=openai"
+                        },
+                        {
+                            "type": "url_citation",
+                            "end_index": 545,
+                            "start_index": 484,
+                            "title": "SEOコンサルティング会社　-　東京都中央区：合同会社みすずや",
+                            "url": "https://misuzuya.co.jp/?utm_source=openai"
+                        },
+                        {
+                            "type": "url_citation",
+                            "end_index": 697,
+                            "start_index": 632,
+                            "title": "SEOコンサルティングサービス｜ウェブココル株式会社",
+                            "url": "https://challenge-seo.jp/?utm_source=openai"
+                        },
+                        {
+                            "type": "url_citation",
+                            "end_index": 852,
+                            "start_index": 801,
+                            "title": "SEO対策・AIO対策サービス Find-A（ファインドエー） | 実績28,000社以上！検索上位化・AI対策の集客支援｜GMOインターネット株式会社",
+                            "url": "https://find-a.jp/?utm_source=openai"
+                        }
+                    ],
+                    "logprobs": [],
+                    "text": "目的別なら、以下を候補にするとよいです（公式サイトの掲載情報を確認）。\n\n- **大規模サイト・EC・BtoBを総合支援：Speee**  \n  技術SEO、キーワード戦略、レポーティングまで対応。取引実績は約3,500社で、EC・BtoB・医療など幅広い業界の支援実績を掲げています。 ([webanalytics.speee.jp](https://webanalytics.speee.jp/?utm_source=openai))\n\n- **長期的なSEO戦略・AI検索対応：アイオイクス（SEO Japan）**  \n  2002年から国内SEOを支援し、2,000社以上の実績を掲げる老舗。SEOとLLMO（AI検索最適化）を統合したコンサルティングが特徴です。 ([seojapan.com](https://seojapan.com/?utm_source=openai))\n\n- **中小企業・技術SEO重視：みすゞや**  \n  SEO経験10年以上・300超のプロジェクト担当実績を掲げ、戦略設計、内製化支援、コンテンツ制作まで対応しています。 ([misuzuya.co.jp](https://misuzuya.co.jp/?utm_source=openai))\n\n- **店舗集客・地域SEO／MEO：ウェブココル**  \n  SEOに加えMEOも支援。地域キーワードでの上位表示や、観光・店舗型ビジネスの集客事例を公開しています。 ([challenge-seo.jp](https://challenge-seo.jp/?utm_source=openai))\n\n- **大量データを活用したSEO・AIO：GMOインターネット（Find-A）**  \n  28,000社以上の実績を掲げ、SEOに加えてAI回答で選ばれやすいコンテンツづくりの支援も提供しています。 ([find-a.jp](https://find-a.jp/?utm_source=openai))\n\n**選定時の注意**：契約前に「同業界の事例」「担当者の実名・体制」「技術改善まで実装できるか」「KPIが順位だけでなく問い合わせ・売上か」「解約条件」を3社程度で比較してください。  \n特に「必ず1位にする」「被リンクを大量に買う」といった提案は避けるのが無難です。"
+                }
+            ],
+            "phase": "final_answer",
+            "role": "assistant"
+        }
+    ],
+    "parallel_tool_calls": true,
+    "presence_penalty": 0,
+    "previous_response_id": null,
+    "prompt_cache_key": null,
+    "prompt_cache_retention": "24h",
+    "reasoning": {
+        "context": "all_turns",
+        "effort": "none",
+        "mode": "standard",
+        "summary": null
+    },
+    "safety_identifier": null,
+    "service_tier": "default",
+    "store": false,
+    "temperature": 1,
+    "text": {
+        "format": {
+            "type": "text"
+        },
+        "verbosity": "medium"
+    },
+    "tool_choice": "required",
+    "tool_usage": {
+        "image_gen": {
+            "input_tokens": 0,
+            "input_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": 0
+            },
+            "total_tokens": 0
+        },
+        "web_search": {
+            "num_requests": 1
+        }
+    },
+    "tools": [
+        {
+            "type": "web_search",
+            "return_token_budget": "default",
+            "search_content_types": [
+                "text"
+            ],
+            "search_context_size": "low",
+            "user_location": {
+                "type": "approximate",
+                "city": null,
+                "country": "US",
+                "region": null,
+                "timezone": null
+            }
+        }
+    ],
+    "top_logprobs": 0,
+    "top_p": 0.98,
+    "truncation": "disabled",
+    "usage": {
+        "input_tokens": 12871,
+        "input_tokens_details": {
+            "cache_write_tokens": 4315,
+            "cached_tokens": 0
+        },
+        "output_tokens": 583,
+        "output_tokens_details": {
+            "reasoning_tokens": 53
+        },
+        "total_tokens": 13454
+    },
+    "user": null,
+    "metadata": []
+}

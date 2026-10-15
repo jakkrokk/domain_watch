@@ -40,7 +40,7 @@ try {
         $uids[] = (int)db()->lastInsertId();
     }
     $id = shot_create($uids[0],['name'=>'HTTP確認用ショット','main'=>'自社','sub'=>['競合'],'prompts'=>'<script>alert(1)</script>'],['openai']);
-    shot_process(db_one('SELECT * FROM shots WHERE id=?',[$id]),static fn()=>['text'=>'自社の回答','model'=>'test']);
+    shot_process(db_one('SELECT * FROM shots WHERE id=?',[$id]),static fn()=>['text'=>openai_format_web_search_text('自社の回答', ['自社検索'], ['https://source.example/'], ['https://quote.example/']), 'answer_text'=>'自社の回答','model'=>'test']);
     ensure(request($base . '/?newa=shots')[0] === 302,'Anonymous access redirects');
     ensure(request($base . '/?newa=shot&id=' . $id . '&download=csv')[0] === 302,'Anonymous RAW download redirects');
     foreach ($emails as $i=>$email) {
@@ -61,11 +61,18 @@ try {
             ensure(($headers['content-type'] ?? '') === 'text/csv; charset=UTF-8','RAW CSV content type');
             ensure(str_contains($headers['content-disposition'] ?? '', 'attachment; filename="shot-' . $id . '-RAW.csv"'),'RAW CSV attachment filename');
             ensure(($headers['content-length'] ?? '') === (string)strlen($csv) && ($headers['cache-control'] ?? '') === 'private, no-store','Download length and private caching');
-            ensure(str_starts_with($csv,"\xEF\xBB\xBFproject_id,project_name,prompt_id,prompt_name,provider,date,exec_count,main_text,main_rate_pct"),'Compatible RAW CSV header and BOM');
-            $lines = explode("\r\n", substr($csv,3));
-            $row = str_getcsv($lines[1], ',', '"', '');
-            ensure(count($lines) === 3 && $row[0] === (string)$id && $row[1] === 'HTTP確認用ショット' && $row[2] === '1' && $row[3] === '<script>alert(1)</script>' && $row[4] === 'openai','Saved prompt and shot exported once');
-            ensure($row[6] === '1' && $row[7] === '自社' && $row[8] === '100' && $row[9] === '競合' && $row[10] === '0' && array_slice($row,11) === ['','','',''],'RAW CSV saved hit values and empty slots');
+            ensure(str_starts_with($csv,"\xEF\xBB\xBFレポート実行ID,実行日時,ファネル段階,クエリID,クエリテキスト,クエリタイプ"),'AnswerIO report header and BOM');
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, substr($csv,3));
+            rewind($stream);
+            $csvHeader = fgetcsv($stream, 0, ',', '"', '');
+            $row = fgetcsv($stream, 0, ',', '"', '');
+            ensure(count($csvHeader) === 26 && count($row) === 26 && fgetcsv($stream, 0, ',', '"', '') === false,'Exactly one complete 26-column row');
+            fclose($stream);
+            ensure($row[0] === 'shot-' . $id && $row[3] === 'shot-' . $id . '-prompt-1' && $row[4] === '<script>alert(1)</script>' && $row[6] === 'openai' && $row[7] === 'test','Saved prompt, IDs and model exported');
+            ensure($row[8] === '自社の回答' && $row[14] === 'TRUE' && $row[15] === '1' && $row[16] === '行1：自社の回答' && $row[18] === '競合','Answer-only mentions and configured competitor');
+            ensure($row[20] === '1' && $row[21] === 'https://quote.example/' && $row[24] === '成功','Actual citations and saved success status');
+            foreach ([2,5,9,10,11,12,13,17,19,22,23] as $column) ensure($row[$column] === '', 'Unrecorded fields stay blank');
             ensure(str_contains($body,'100%') && str_contains($body,'自社の回答'),'Result and aggregate rendered');
             ensure(!str_contains($body,'<script>alert(1)</script>'),'Prompt escaped');
             [$status,$body] = request($base . '/?newa=shot_new');

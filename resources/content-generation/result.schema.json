@@ -1,0 +1,206 @@
+{
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "related_keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audience": {
+      "type": "string"
+    },
+    "service": {
+      "type": "string"
+    },
+    "site_url": {
+      "type": "string"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "intent": {
+      "type": "string"
+    },
+    "information_needs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "initial_outline": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "conversion_plan": {
+      "type": "string"
+    },
+    "llmo_analysis": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "H2",
+              "H3"
+            ]
+          },
+          "heading": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "1要素につき1文または1つの箇条書き。概要欄に縦に1行ずつ記載する執筆要点。"
+          },
+          "word_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "format": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "level",
+          "heading",
+          "points",
+          "word_count",
+          "format",
+          "sources"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "competitors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "word_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "headings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "useful_information": {
+            "type": "string"
+          },
+          "adopted_points": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rank",
+          "title",
+          "url",
+          "word_count",
+          "headings",
+          "useful_information",
+          "adopted_points"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "fanout": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "gemini"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "heading": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "query",
+          "heading",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "lead_guidance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "リード文の執筆指示を1文ずつ2件。本文原稿ではなく、共感・答え・記事内容・読むメリットの伝え方を指定する。"
+    }
+  },
+  "required": [
+    "title",
+    "related_keywords",
+    "audience",
+    "service",
+    "site_url",
+    "assumptions",
+    "intent",
+    "information_needs",
+    "initial_outline",
+    "conversion_plan",
+    "llmo_analysis",
+    "limitations",
+    "sections",
+    "competitors",
+    "fanout",
+    "lead_guidance"
+  ],
+  "additionalProperties": false
+}

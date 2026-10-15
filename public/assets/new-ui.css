@@ -441,6 +441,36 @@ textarea {
 .rate.gemini > strong {
   color: #159782;
 }
+.rate-link {
+  display: block;
+  border-radius: 6px;
+}
+.rate-link:hover {
+  text-decoration: none;
+}
+.rate-link:hover .rate > strong,
+.rate-link:focus-visible .rate > strong {
+  text-decoration: underline;
+}
+.competitor-prompts {
+  margin-bottom: 24px;
+}
+.competitor-prompts .selected-answer {
+  background: #f0f4ff;
+}
+@media (max-width: 520px) {
+  .competitor-prompts .comparison-table th:first-child {
+    width: 48%;
+  }
+  .competitor-prompts .comparison-table th:nth-child(2) {
+    width: 26%;
+  }
+  .competitor-prompts .comparison-table th:last-child,
+  .competitor-prompts .comparison-table td:last-child {
+    display: table-cell;
+    width: 26%;
+  }
+}
 .metric-card .rate {
   margin-top: 21px;
   display: flex;

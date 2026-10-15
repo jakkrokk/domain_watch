@@ -86,7 +86,7 @@ foreach ($results as $result) {
 nu_header($shot['name'], null, $shotView, $period);
 echo '<a class="back-link" href="' . h(nu_url('shots')) . '">← ショット一覧</a>';
 nu_heading('SHOT RESULTS', $shot['name'], '受付日時：' . $shot['created_at'] . ' ／ ' . shot_status_label($shot['status']) . ' ／ ' . $processed . ' / ' . count($results) . '回答処理済み');
-echo '<div class="list-toolbar"><span class="muted">出現率のRAWデータ（CSV）と、回答全文を含むExcelをダウンロードできます。</span><div><a class="button secondary" href="' . h(nu_url('shot',['id'=>$shot['id'],'download'=>'csv'])) . '">AnswerIO形式でDL</a> <a class="button primary" href="' . h(nu_url('shot',['id'=>$shot['id'],'download'=>'xlsx'])) . '">結果を一括DL（Excel）</a></div></div>';
+echo '<div class="list-toolbar"><span class="muted">回答・言及・引用情報のCSVと、集計を含むExcelをダウンロードできます。未取得の項目は空欄です。</span><div><a class="button secondary" href="' . h(nu_url('shot',['id'=>$shot['id'],'download'=>'csv'])) . '">AnswerIO形式でDL</a> <a class="button primary" href="' . h(nu_url('shot',['id'=>$shot['id'],'download'=>'xlsx'])) . '">結果を一括DL（Excel）</a></div></div>';
 if (in_array($shot['status'],['queued','running'],true)) echo '<div class="notice ok">調査中です。画面を閉じても処理は続きます。後ほど結果をご確認ください。 <a href="' . h(nu_url('shot',['id'=>$shot['id']])) . '">状態を更新</a></div>';
 if (in_array($shot['status'],['partial','failed'],true)) echo '<div class="notice err">取得できなかった回答があります。成功した回答は保存されています。必要に応じて新しいショットで再調査してください。</div>';
 echo '<section class="panel table-scroll"><div class="panel-heading"><h2>自社・計測したい文字列の出現率</h2><p>取得に成功した回答を母数にしています。未処理・失敗した回答は含めません。</p></div><table class="comparison-table"><thead><tr><th>対象テキスト</th>';
