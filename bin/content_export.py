@@ -3,10 +3,11 @@
 import json
 import re
 import sys
-from copy import copy
+import zipfile
+from copy import copy, deepcopy
 from pathlib import Path
 import openpyxl
-from openpyxl.comments import Comment
+from openpyxl.worksheet.views import Selection
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +52,25 @@ def sentences(values):
     return result
 
 
+def writing_instructions(value):
+    """Convert legacy format labels into actionable writing instructions."""
+    value = re.sub(r'^(?:表現|形式)[：:]\s*', '', value.strip())
+    if not value: return []
+    if re.search(r'(?:する|示す|まとめる|入れる|書く|伝える|置く|添える|並べる)[。.]?$', value):
+        return sentences(value)
+    instructions = []
+    if '表' in value: instructions.append('表を入れ、上記の内容を項目ごとに整理して比較できるようにする。')
+    if any(word in value for word in ['箇条書き','チェックリスト','一覧']):
+        instructions.append('上記の要点や確認事項を箇条書きで示す。')
+    if '手順' in value: instructions.append('実行する順番に番号を付け、各手順で行うことを示す。')
+    if '流れ図' in value: instructions.append('工程の順番が分かる図を入れる。')
+    if '事例カード' in value: instructions.append('事例ごとに土地条件・取り組み・成果・注意点を同じ順番で記載する。')
+    if 'FAQ' in value or '回答' in value: instructions.append('質問の直後に短く回答し、その後に条件や注意点を補足する。')
+    if '定義' in value: instructions.append('最初に用語の意味を短く説明し、具体例を添える。')
+    if not instructions: instructions.append('最初に結論を短く書き、その後に上記の具体例や注意点を説明する。')
+    return instructions
+
+
 def theme_title(keyword, used):
     name = re.sub(r'[\\/*?:\[\]\x00-\x1f]', ' ', keyword).strip().strip("'") or 'テーマ'
     if name.casefold() == 'history': name = 'History_'
@@ -71,6 +91,21 @@ def style_row(sheet, sample, row, source):
     sheet.row_dimensions[row].height = sample.row_dimensions[source].height or 16.5
 
 
+def cache_totals(path, totals):
+    # Preserve the sample's SUM formula AND its cached result for previewers.
+    with zipfile.ZipFile(path) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    for i, total in enumerate(totals, 1):
+        name = f'xl/worksheets/sheet{i}.xml'
+        xml = files[name].decode('utf-8')
+        def cached(match):
+            cell = match.group(0)
+            return re.sub(r'<v(?:\s[^>]*)?\s*/>|<v>.*?</v>', f'<v>{total}</v>', cell)
+        files[name] = re.sub(r'<c\b[^>]*\br="C4"[^>]*>.*?</c>', cached, xml).encode('utf-8')
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files.items(): archive.writestr(name, content)
+
+
 def export(payload, output):
     job, items = payload['job'], payload['items']
     completed = [item for item in items if item['status'] == 'completed']
@@ -80,10 +115,22 @@ def export(payload, output):
     template, sample = wb['テンプレ'], wb['サンプル']
     originals = list(wb)
     used = set()
+    totals, coverage = [], []
     for item in completed:
         result = json.loads(item['result']) if isinstance(item['result'], str) else item['result']
         evidence = json.loads(item['evidence']) if isinstance(item['evidence'], str) else (item['evidence'] or {})
+        for key in ['title', 'audience']:
+            if not str(result.get(key, '')).strip(): raise ValueError('Missing required field: ' + key)
+        if not result.get('sections'): raise ValueError('Missing outline')
         sheet = wb.copy_worksheet(template)
+        # copy_worksheet does not copy sheet views or print options.
+        sheet.views = deepcopy(template.views)
+        sheet.print_options = copy(template.print_options)
+        sheet.sheet_view.pane = None
+        sheet.sheet_view.topLeftCell = 'B1'
+        sheet.sheet_view.selection = [Selection(activeCell='C2', sqref='C2')]
+        report = {'theme': item['keyword'], 'unavailable': [], 'intentional_blanks': ['空行・余白', 'クライアント様コメント（未提供）']}
+
         # Assign final names after removing source worksheets to allow themes named テンプレ etc.
         sheet._content_theme = theme_title(item['keyword'], used)
         # Remove fixed placeholder headings; rebuild each block from the sample's styles.
@@ -94,22 +141,20 @@ def export(payload, output):
                 cell.comment = None
                 cell._style = copy(sample.cell(13, cell.column)._style)
             sheet.row_dimensions[row[0].row].height = 16.5
-        for cell, value in {'C2':item['keyword'], 'C3':'、'.join(result['related_keywords']), 'C6':result['title'], 'C8':result['audience']}.items():
+        persona = result['audience']
+        if not persona.lstrip().startswith(('・','-','•')):
+            persona = '\n'.join('・' + line for line in sentences(persona))
+        for cell, value in {'C2':item['keyword'], 'C3':'、'.join(result['related_keywords'][:3]), 'C6':result['title'], 'C8':persona}.items():
             put(sheet, cell, value)
-        # Editorial context stays available in a comment, without additional sheets or body rows.
-        context = []
-        if job.get('notes'): context.append('構成案作成の参考メモ\n' + job['notes'])
-        if result.get('assumptions'): context.append('推定と根拠\n' + '\n'.join(result['assumptions']))
-        if result.get('limitations'): context.append('制約・未取得情報\n' + '\n'.join(result['limitations']))
-        if result.get('llmo_analysis'): context.append('LLMO調整\n' + result['llmo_analysis'])
-        if context: sheet['C2'].comment = Comment('\n\n'.join(context), 'Domain Watch')
         # Row 10 is a heading, not the lead paragraph. Rows 11/12 describe how to write it.
         for row in range(10,14): style_row(sheet, sample, row, row)
         for cell in ['B10','C10','D10','E10','F10','B11']:
             put(sheet, cell, sample[cell].value)
-        guidance = result.get('lead_guidance', LEAD_GUIDANCE)
+        guidance = result.get('lead_guidance')
+        if guidance is None:
+            guidance = [f'「{item["keyword"]}」を調べる読者の悩みに共感し、結論と記事で扱う判断材料を示す。', LEAD_GUIDANCE[1]]
         if not isinstance(guidance, list) or len(guidance) != 2 or any(len(sentences([v])) != 1 for v in guidance):
-            guidance = LEAD_GUIDANCE
+            raise ValueError('Lead guidance must contain exactly two single-sentence instructions')
         put(sheet, 'C11', guidance[0]); put(sheet, 'C12', guidance[1])
         total, row = 200, 14
         for index, section in enumerate(result['sections']):
@@ -122,11 +167,20 @@ def export(payload, output):
             put(sheet, f'D{row}', section['word_count'])
             put(sheet, f'E{row}', '参照URL')
             if is_h2: put(sheet, f'F{row}', 'クライアント様コメント')
-            points = sentences(section['points'])
-            # Older results sometimes put format only in this field; preserve that guidance.
-            if section.get('format') and not any(p.startswith(('形式：','表現：')) for p in points):
-                points.extend(sentences('表現：' + section['format']))
+            if not section['heading'].strip() or not section['points'] or section['word_count'] <= 0:
+                raise ValueError('Missing heading, outline content or planned character count')
+            points = []
+            for point in sentences(section['points']):
+                points.extend(writing_instructions(point) if point.startswith(('形式：','表現：','形式:','表現:')) else [point])
+            for instruction in writing_instructions(section.get('format', '')):
+                if instruction not in points: points.append(instruction)
+            # Reasons are ordinary cells at the bottom of this section, never Excel notes.
+            reasons = sentences(section.get('llmo_reasons', []))
+            points.extend('LLMOとして入れた理由：' + reason for reason in reasons)
             urls = list(dict.fromkeys(url.strip() for value in section['sources'] for url in value.splitlines() if url.strip()))
+            if not urls:
+                urls = ['未取得']
+                report['unavailable'].append(section['heading'] + '：参照URL未取得')
             for offset in range(max(1, len(points), len(urls))):
                 body_row = row + 1 + offset
                 style_row(sheet, sample, body_row, 15 if is_h2 and offset == 0 else 20)
@@ -134,31 +188,68 @@ def export(payload, output):
                 if offset < len(points): put(sheet, f'C{body_row}', points[offset])
                 # Match E15: normal text, sample font/alignment/format, one URL per row.
                 sheet[f'E{body_row}']._style = copy(sample['E15']._style)
-                if offset < len(urls): put(sheet, f'E{body_row}', urls[offset])
+                if offset < len(urls):
+                    put(sheet, f'E{body_row}', urls[offset])
+                    alignment = copy(sheet[f'E{body_row}'].alignment)
+                    alignment.horizontal = 'fill'
+                    sheet[f'E{body_row}'].alignment = alignment
             total += section['word_count']
             row += max(1, len(points), len(urls)) + 2  # One empty row before the next heading.
             style_row(sheet, sample, row-1, 13)
-        put(sheet, 'C4', total)
-        put(sheet, 'H9', '競合調査（最大10件・順位未確認は0）')
+        sheet['C4'] = sample['C4'].value
+        totals.append(total)
+        put(sheet, 'H9', template['H9'].value)
         for r in range(11,21):
             for col in 'HIJK': put(sheet, f'{col}{r}', None)
+        report['competitor_count'] = min(len(result['competitors']), 10)
+        for r in range(11 + report['competitor_count'], 21):
+            put(sheet, f'H{r}', r-10); put(sheet, f'I{r}', '未取得'); put(sheet, f'J{r}', '未取得'); put(sheet, f'K{r}', 0)
+        if report['competitor_count'] < 10:
+            report['unavailable'].append(f'競合記事：{report["competitor_count"]}/10件取得')
         for r, competitor in enumerate(result['competitors'][:10],11):
-            for col, key in [('H','rank'),('I','title'),('J','url'),('K','word_count')]:
+            put(sheet, f'H{r}', r-10)
+            for col, key in [('I','title'),('J','url'),('K','word_count')]:
                 put(sheet, f'{col}{r}', competitor[key])
-        put(sheet, 'N10', '順位'); put(sheet, 'O10', '見出し'); put(sheet, 'P10', '参照URL')
+        if any(not c['rank'] for c in result['competitors']): report['unavailable'].append('競合の検索順位：未計測のため0')
+        if any(not c['word_count'] for c in result['competitors']): report['unavailable'].append('競合本文文字数：未計測のため0')
+        for cell in ['N10', 'O10', 'P10']: put(sheet, cell, template[cell].value)
         r = 11
-        for competitor in result['competitors']:
-            for heading in competitor['headings']:
-                put(sheet, f'N{r}', competitor['rank']); put(sheet, f'O{r}', heading); put(sheet, f'P{r}', competitor['url']); r += 1
-        competitor_end = r
-        put(sheet, 'H23', '関連・ファンアウトKW（検索回数・CPC未取得は0）')
-        queries = list(dict.fromkeys(result['related_keywords'] + [q for e in evidence.values() for q in e.get('search_queries',[])]))
+        for number, competitor in enumerate(result['competitors'][:10], 1):
+            if not competitor['headings']:
+                report['unavailable'].append(competitor['url'] + '：見出し未取得')
+            for heading in competitor['headings'] or ['見出し未取得']:
+                put(sheet, f'N{r}', number); put(sheet, f'O{r}', heading); put(sheet, f'P{r}', competitor['url']); r += 1
+        competitor_end = r-1
+        put(sheet, 'N10', 'No.')
+        put(sheet, 'H23', template['H23'].value)
+        queries = list(dict.fromkeys([q for e in evidence.values() for q in e.get('search_queries',[])] + [f['query'] for f in result.get('fanout', [])] + result['related_keywords']))
         for r in range(25,75):
             for col in 'HIJK': put(sheet, f'{col}{r}', None)
+        report['related_keyword_count'] = min(len(queries), 50)
+        if len(queries) < 50: report['unavailable'].append(f'関連キーワード：{len(queries)}/50件取得')
+        report['unavailable'].append('検索回数・CPC：未計測のため0')
+        for r in range(25 + report['related_keyword_count'],75):
+            put(sheet, f'H{r}', r-24); put(sheet, f'I{r}', '未取得'); put(sheet, f'J{r}', 0); put(sheet, f'K{r}', 0)
         for r, keyword in enumerate(queries[:50],25):
             put(sheet, f'H{r}', r-24); put(sheet, f'I{r}', keyword); put(sheet, f'J{r}', 0); put(sheet, f'K{r}', 0)
+        report['limitations'] = result.get('limitations', [])
+        report['numbering'] = '競合記事の掲載No.。検索順位の実測ではありません。'
+        report['article_measurements'] = [c.get('measurement', {}) for c in result['competitors'][:10]]
+        coverage.append(report)
+        # Remove template-only formatting below each independent table.
+        ends = {**{c: row-2 for c in range(1,7)}, 7: 0, **{c:74 for c in range(8,12)}, 12:0, 13:0, **{c:competitor_end for c in range(14,17)}}
+        for key, cell in list(sheet._cells.items()):
+            cell.comment = None
+            if key[1] in (5,10,16) and isinstance(cell.value,str) and cell.value.startswith(('https://','http://')):
+                alignment = copy(cell.alignment)
+                alignment.horizontal = 'fill'
+                cell.alignment = alignment
+            if key[0] > ends.get(key[1], 0): del sheet._cells[key]
+        last_row = max(row-2, competitor_end, 74)
+        for dimension in list(sheet.row_dimensions):
+            if dimension > last_row: del sheet.row_dimensions[dimension]
         sheet.freeze_panes = None
-        sheet.print_area = f'B2:P{max(row, competitor_end, 75)}'
+        sheet.print_area = f'B2:P{last_row}'
     for source in originals: wb.remove(source)
     for sheet in wb:
         sheet.title = sheet._content_theme
@@ -166,9 +257,16 @@ def export(payload, output):
     wb.active = 0
     output = Path(output)
     temp = output.with_suffix('.tmp.xlsx')
+    wb.calculation.fullCalcOnLoad = True
+    wb.calculation.forceFullCalc = True
     wb.save(temp)
+    cache_totals(temp, totals)
     check = openpyxl.load_workbook(temp, read_only=True); check.close()
     temp.replace(output)
+    audit = output.with_suffix('.coverage.json')
+    audit_temp = audit.with_suffix('.tmp.json')
+    audit_temp.write_text(json.dumps(coverage, ensure_ascii=False, indent=2) + '\n')
+    audit_temp.replace(audit)
 
 
 if __name__ == '__main__':

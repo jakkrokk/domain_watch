@@ -54,7 +54,7 @@ try {
   ensure(($response[2]['location']??'')==='/content-generation','login return');
   [$status,$body]=request('/content-generation');ensure($status===200,'page renders');ensure(!str_contains($body,'<script>bad</script>'),'escaped');
   ensure(!str_contains($body,'<script>memo</script>'),'notes escaped');
-  ensure(str_contains($body,h($notes))===($i===0),'notes ownership');
+  ensure(!str_contains($body,h($notes)),'task list omits notes');
   ensure((bool)preg_match('/<textarea[^>]*name="notes"[^>]*>/', $body,$noteField)&&!str_contains($noteField[0],'required'),'optional notes textarea');
   $download=request('/content-generation?download='.$id);ensure($download[0]===($i===0?200:404),'download ownership');
   $statuses=request('/content-generation?format=status');ensure(str_contains($statuses[1],'completed')===($i===0),'status ownership');
@@ -72,6 +72,6 @@ try {
  }
  // Inspect actual Excel values and formula safety independently of the exporter.
  $python=__DIR__.'/../storage/content-venv/bin/python';
- content_command([$python,'-c', 'import openpyxl,sys; w=openpyxl.load_workbook(sys.argv[1]); s=w.worksheets[0]; assert s["C2"].data_type=="s"; assert s["J25"].value==0; assert s["K25"].value==0; assert s["C14"].value=="始め方"; assert len(w.sheetnames)==2; assert s.title==s["C2"].value; assert sys.argv[2] in s["C2"].comment.text; assert s.freeze_panes is None; assert s["C10"].value=="リード文"; assert s["E14"].value=="参照URL"; assert s["E15"].value=="https://example.com/"',content_artifact($id),$notes],__DIR__,'',content_dir($id).'/test.log',30);
+ content_command([$python,'-c', 'import openpyxl,sys; w=openpyxl.load_workbook(sys.argv[1]); s=w.worksheets[0]; assert s["C2"].data_type=="s"; assert s["J25"].value==0; assert s["K25"].value==0; assert s["C14"].value=="始め方"; assert len(w.sheetnames)==2; assert s.title==s["C2"].value; assert all(c.comment is None for row in s for c in row); assert s.freeze_panes is None; assert s["C10"].value=="リード文"; assert s["E14"].value=="参照URL"; assert s["E15"].value=="https://example.com/"',content_artifact($id),$notes],__DIR__,'',content_dir($id).'/test.log',30);
  echo "PASS: notes persistence/prompt/Excel/HTTP, validation, optional fields, queue, recovery, failure, Excel, auth, ownership, CSRF, HTTP creation\n";
 } finally {foreach($uids as $uid)db_exec('DELETE FROM users WHERE id=?',[$uid]);foreach($ids as $id)clean_dir(content_dir($id));unlink($cookie);}

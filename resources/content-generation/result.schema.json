@@ -79,13 +79,21 @@
             "minimum": 0
           },
           "format": {
-            "type": "string"
+            "type": "string",
+            "description": "何をどう書くかを示す具体的な執筆指示の文。例：成分・食品例・注意点の3列の表を入れる。「表現：」や名詞だけのラベルは禁止。pointsに同じ指示があれば空文字でよい。"
           },
           "sources": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "llmo_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "この見出しの内容や形式をLLMOのために採用・調整した理由を1要素1文で記す。実測AI回答のどの特徴やAPI検索クエリに対応したか、何を入れたかを具体的に説明する。対応がない節は空配列。"
           }
         },
         "required": [
@@ -94,7 +102,8 @@
           "points",
           "word_count",
           "format",
-          "sources"
+          "sources",
+          "llmo_reasons"
         ],
         "additionalProperties": false
       }

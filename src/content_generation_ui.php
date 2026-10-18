@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect('/content-generation');
     } catch (InvalidArgumentException $e) { http_response_code(422); $error = $e->getMessage(); }
 }
-$jobs = db_all("SELECT j.*, (SELECT COUNT(*) FROM content_items i WHERE i.job_id=j.id AND i.status='completed') done, (SELECT COUNT(*) FROM content_items i WHERE i.job_id=j.id) total FROM content_jobs j WHERE owner_user_id=? ORDER BY id DESC LIMIT 100",[$uid]);
+$jobs = db_all("SELECT id,status,stage FROM content_jobs WHERE owner_user_id=? ORDER BY id DESC LIMIT 100",[$uid]);
 page_header('コンテンツ構成案の作成');
 ?>
 <style>
@@ -43,11 +43,11 @@ page_header('コンテンツ構成案の作成');
 .cg-task-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
 .cg-task-heading h2{margin:0}
 .cg-task-heading a{font-size:13px;white-space:nowrap}
-.cg-task{position:relative;flex-direction:column;gap:8px}
-.cg-main>small{display:block;padding-right:76px}
-.cg-right{min-width:0;text-align:left;overflow-wrap:anywhere}
-.cg-right .cg-badge{position:absolute;right:0;top:20px}
-.cg-right p{margin:0}
+.cg-task{flex-direction:row;align-items:center;gap:16px}
+.cg-keywords{margin:0;font-weight:600}
+.cg-right{min-width:0;flex-shrink:0;text-align:right}
+.cg-right .cg-badge{white-space:nowrap}
+a.cg-badge{text-decoration:underline;text-underline-offset:3px}
 @media(max-width:960px){.cg-layout{grid-template-columns:minmax(0,1fr);gap:20px}.cg-tasks{position:static;max-height:none;overflow:visible}}
 </style>
 <p class="cg-help">キーワードから検索意図・競合・AI回答を調査し、SEO／LLMOを考慮した記事構成案をExcelで作成します。</p>
@@ -71,18 +71,18 @@ page_header('コンテンツ構成案の作成');
 <button type="submit" id="cg-submit">構成案の作成を依頼</button>
 </form></section>
 <section class="card cg-tasks" aria-labelledby="cg-tasks-heading"><div class="cg-task-heading"><h2 id="cg-tasks-heading">作業タスク一覧</h2><a href="/content-generation">状態を更新</a></div>
-<p class="cg-help" id="cg-updates" role="status">最新100件まで表示します。完了後、この一覧からExcelをダウンロードできます。</p>
+<p class="cg-help" id="cg-updates" role="status"></p>
 <div>
 <?php if (!$jobs): ?><p class="cg-help">作業タスクはまだありません。</p><?php endif ?>
-<?php foreach ($jobs as $job): $items = db_all('SELECT keyword,status,error_message FROM content_items WHERE job_id=? ORDER BY position',[$job['id']]); ?>
+<?php foreach ($jobs as $job): $items = db_all('SELECT keyword FROM content_items WHERE job_id=? ORDER BY position',[$job['id']]); ?>
 <article class="cg-task" data-job-id="<?= (int)$job['id'] ?>" data-status="<?= h($job['status']) ?>" data-stage="<?= h($job['stage']) ?>">
-<div class="cg-main"><small>#<?= (int)$job['id'] ?> · <?= h($job['created_at']) ?></small><div class="cg-keywords"><?= h(implode(' / ',array_column($items,'keyword'))) ?></div>
-<div class="cg-help">対象サービス：<?= h($job['service'] ?: '自動推定') ?><br>対象読者：<?= h($job['audience'] ?: '自動推定') ?><br>URL：<?= h($job['site_url'] ?: '自動推定') ?></div>
-<?php if (!empty($job['notes'])): ?><details class="cg-help"><summary>参考メモ</summary><div style="white-space:pre-wrap"><?= h($job['notes']) ?></div></details><?php endif ?>
-<?php if ($job['error_message']): ?><p class="cg-error"><?= h($job['error_message']) ?></p><?php endif ?>
-<?php foreach ($items as $item): if ($item['status']==='failed'): ?><p class="cg-error"><?= h($item['keyword']) ?>：<?= h($item['error_message']) ?></p><?php endif; endforeach ?>
-</div><div class="cg-right"><span class="cg-badge cg-<?= h($job['status']) ?>"><?= h(content_status($job['status'])) ?></span><p class="cg-help"><?= (int)$job['done'] ?> / <?= (int)$job['total'] ?>件 完了<br><?= h($job['stage']) ?></p>
-<?php if (in_array($job['status'],['completed','partial'],true) && is_file(content_artifact((int)$job['id']))): ?><a class="cg-dl" href="/content-generation?download=<?= (int)$job['id'] ?>">Excelをダウンロード</a><?php endif ?>
+<div class="cg-main"><div class="cg-keywords"><?= h(implode(' / ',array_column($items,'keyword'))) ?></div></div>
+<div class="cg-right">
+<?php if (in_array($job['status'],['completed','partial'],true) && is_file(content_artifact((int)$job['id']))): ?>
+<a class="cg-badge cg-<?= h($job['status']) ?>" href="/content-generation?download=<?= (int)$job['id'] ?>" aria-label="<?= h(content_status($job['status']) . '：' . implode(' / ',array_column($items,'keyword')) . 'のExcelをダウンロード') ?>" title="Excelをダウンロード"><?= h(content_status($job['status'])) ?></a>
+<?php else: ?>
+<span class="cg-badge cg-<?= h($job['status']) ?>"><?= h(content_status($job['status'])) ?></span>
+<?php endif ?>
 </div></article>
 <?php endforeach ?>
 </div>

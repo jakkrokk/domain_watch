@@ -90,6 +90,7 @@ function content_export(array $job): void {
     $dir = content_dir((int)$job['id']);
     $payload = $dir . '/workbook.json';
     file_put_contents($payload, content_json(['job'=>$job,'items'=>db_all('SELECT * FROM content_items WHERE job_id=? ORDER BY position', [$job['id']])]));
+    content_command([env_get('CONTENT_PYTHON_BINARY', __DIR__ . '/../storage/content-venv/bin/python'), __DIR__ . '/../bin/content_metrics.py', $payload], realpath(__DIR__ . '/..'), '', $dir . '/metrics.log', 1200);
     content_command([env_get('CONTENT_PYTHON_BINARY', __DIR__ . '/../storage/content-venv/bin/python'), __DIR__ . '/../bin/content_export.py', $payload, content_artifact((int)$job['id'])], realpath(__DIR__ . '/..'), '', $dir . '/export.log', 120);
     if (!is_file(content_artifact((int)$job['id']))) throw new RuntimeException('Excelの保存に失敗しました。');
 }
