@@ -224,6 +224,8 @@ Codexの実行方法は [OpenAIの公式例](https://developers.openai.com/cookb
 競合見出し欄の「順位」は対応する掲載番号を示す「No.」とし、その他のテンプレートの見出し名・グリッド線非表示・90%表示を維持し、C4のSUM数式と初期表示用の計算値を保存する。項目確認結果は各出力に対応する `content.coverage.json` に残す。クライアント記入欄・余白は意図的に空欄にする。
 右側の関連キーワード表は取得した検索サジェストを最大50件まで表示し、API検索クエリは分析用JSONに保持する。AI回答・調査詳細はDBと中間JSONに保存する。Excelにはメモ・コメントを付けない。任意の取材・追加確認は「（可能なら）」、表作成は「（表の作成）」を文頭に付けて赤字表示する。概要は具体的で簡潔な肯定文にし、LLMOの採用理由（sections.llmo_reasons）は「※LLMO用：」を付けて概要の末尾に1文1行で記載する。URLセルは横位置「繰り返し」、構成案末尾以降の不要な書式を削除する。ダウンロード名は登録した最初のキーワードと登録日を使い「キーワード_YYYYMMDD.xlsx」とする。
 
+構成案の日本語生成には [natural-japanese](https://github.com/coji/natural-japanese) を使用する。ルール本文と手動チェックリストを `resources/content-generation/natural-japanese/` に同梱し、生成プロンプトへ毎回渡す。シェルを無効にした生成環境のため、lintスクリプトは実行せず、スキルが定める手動点検をモデルに指示する。見出し・概要・執筆指示が対象で、競合の原文・実測検索クエリ・出典名・URLは保持する。Excelの構造や数値の計測処理は変更しない。適用は次に生成する構成案からで、既存のExcelは書き換えない。同梱元とハッシュは `SOURCE.json`、ライセンスは同ディレクトリの `LICENSE` に記録する。
+
 待機中・作成中・完了・一部失敗・失敗を表示する。15秒おきに更新を検出し、入力途中のフォームを再読み込みで消さない。
 ChatGPT/Geminiのいずれかの質問で回答を取得できないキーワードは失敗扱いとし、ほかの質問・キーワードは継続する。成功した構成があれば一部失敗でもExcelを取得できる。
 中断時は実行中だったキーワードを失敗として記録し、未処理のキーワードのみ再開する。有料APIを同じキーワードに自動再送しない。
@@ -235,5 +237,6 @@ Codexの質問文推定は1キーワード10分、構成作成は1キーワー�
 ```bash
 php bin/test_content_generation.php http://127.0.0.1:8000
 php bin/test_content_ai_prompts.php
+php bin/test_content_japanese.php
 storage/content-venv/bin/python bin/test_content_export.py
 ```

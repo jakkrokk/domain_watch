@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/coji/natural-japanese",
+  "copied_on": "2026-10-19",
+  "source": "Installed natural-japanese skill; files copied without changes",
+  "sha256": {
+    "SKILL.md": "3f51689eba0894845551fdf9d12b605bc32dc8ff54fb14c193574932f4398d6a",
+    "references/manual-checklist.md": "ac31e8fcfdfeb79b8339cc38022a88e2a80653a2faea19e2925335919b53b2cb",
+    "LICENSE": "fb3dd814f7b2807de2a812446c61643cf235e731bbf8cf908c0a5962d8917121"
+  }
+}
