@@ -68,6 +68,10 @@ a.cg-badge{text-decoration:underline;text-underline-offset:3px}
 <div class="row"><label for="cg-notes">構成案作成の参考メモ <span class="cg-optional">任意・10,000文字まで</span></label>
 <textarea id="cg-notes" name="notes" maxlength="10000" aria-describedby="cg-notes-help" placeholder="例：田舎の土地を所有する人向けに、活用方法の一覧ではなく、成功条件・失敗要因・土地の適性・成功事例を解説する。&#10;既存の「土地活用アイデア」と重複せず、どのような土地なら成功しやすいかの判断に特化する。"><?= h(is_string($_POST['notes'] ?? null) ? $_POST['notes'] : '') ?></textarea>
 <p class="cg-help" id="cg-notes-help">記事の方向性、重視したい内容、避けたい内容、既存記事との違いなどを入力できます。今回のすべてのキーワードの構成案作成で参考にします。特定のキーワードだけに適用したい場合は、メモ内にキーワードを記載してください。</p></div>
+<div class="row"><label for="cg-ai-prompts">AIへの質問文 <span class="cg-optional">任意・改行区切りで最大3件・1件1,000文字まで</span></label>
+<textarea id="cg-ai-prompts" name="ai_prompts" maxlength="4000" aria-describedby="cg-ai-prompts-help cg-ai-prompts-count" placeholder="SEO対策とは何ですか？初心者にも分かるように教えてください。&#10;SEO対策は具体的に何から始めればよいですか？&#10;SEO対策を自社で行う場合と外注する場合の判断基準を教えてください。"><?= h(is_string($_POST['ai_prompts'] ?? null) ? $_POST['ai_prompts'] : '') ?></textarea>
+<div class="cg-help" id="cg-ai-prompts-count" aria-live="polite">0 / 3件</div>
+<p class="cg-help" id="cg-ai-prompts-help">入力した質問文は今回のすべてのキーワードで共通して使い、それぞれChatGPTとGeminiに送ります。空欄の場合は、キーワードごとに対象サービス・対象読者・参考メモを踏まえて3件を自動作成します。</p></div>
 <button type="submit" id="cg-submit">構成案の作成を依頼</button>
 </form></section>
 <section class="card cg-tasks" aria-labelledby="cg-tasks-heading"><div class="cg-task-heading"><h2 id="cg-tasks-heading">作業タスク一覧</h2><a href="/content-generation">状態を更新</a></div>
@@ -94,6 +98,9 @@ const cgCount=document.getElementById('cg-count');
 let cgDirty=<?= $_SERVER['REQUEST_METHOD']==='POST' ? 'true' : 'false' ?>;
 function cgValidate(){const n=cgKeywords.value.split(/\r\n|[\n\r\u0085\u2028\u2029]/u).filter(v=>v.trim()).length;cgCount.textContent=`${n} / 10個`;cgKeywords.setCustomValidity(n>10?'キーワードは10個までです。':n===0?'キーワードを入力してください。':'');}
 cgKeywords.addEventListener('input',cgValidate);cgValidate();
+const cgAiPrompts=document.getElementById('cg-ai-prompts');
+function cgValidateAiPrompts(){const lines=cgAiPrompts.value.split(/\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/u).map(v=>v.trim()).filter(Boolean);document.getElementById('cg-ai-prompts-count').textContent=`${lines.length} / 3件`;cgAiPrompts.setCustomValidity(lines.length>3?'AIへの質問文は3件までです。':lines.some(v=>Array.from(v).length>1000)?'AIへの質問文は1件1,000文字以内です。':'');}
+cgAiPrompts.addEventListener('input',cgValidateAiPrompts);cgValidateAiPrompts();
 document.getElementById('cg-form').addEventListener('input',()=>{cgDirty=true;});
 document.getElementById('cg-form').addEventListener('submit',()=>{document.getElementById('cg-submit').disabled=true;});
 if(document.querySelector('[data-status="queued"],[data-status="running"]'))setInterval(async()=>{try{const response=await fetch('/content-generation?format=status');if(!response.ok||!response.headers.get('content-type')?.includes('application/json'))return;const jobs=await response.json();const changed=jobs.some(j=>{const el=document.querySelector(`[data-job-id="${j.id}"]`);return el&&(el.dataset.status!==j.status||el.dataset.stage!==j.stage);});if(changed){if(!cgDirty)location.reload();else document.getElementById('cg-updates').textContent='作業状況が更新されました。入力を終えたら「状態を更新」で確認できます。';}}catch{}},15000);

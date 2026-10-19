@@ -88,6 +88,29 @@
               "type": "string"
             }
           },
+          "source_attributions": {
+            "type": "array",
+            "description": "確認済みの根拠と本文で出典名を示す執筆指示。根拠が不要または未確認の節は空配列。",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_name": {"type": "string", "minLength": 1},
+                "source_url": {"type": "string", "minLength": 1},
+                "supported_claim": {"type": "string", "minLength": 1},
+                "writing_guidance": {"type": "string", "minLength": 1},
+                "origins": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "enum": ["openai_citation", "openai_source", "gemini_citation", "gemini_source", "additional_research"]
+                  }
+                }
+              },
+              "required": ["source_name", "source_url", "supported_claim", "writing_guidance", "origins"],
+              "additionalProperties": false
+            }
+          },
           "llmo_reasons": {
             "type": "array",
             "items": {
@@ -103,6 +126,7 @@
           "word_count",
           "format",
           "sources",
+          "source_attributions",
           "llmo_reasons"
         ],
         "additionalProperties": false

@@ -31,23 +31,39 @@ try {
  $notes="田舎の土地の成功条件・失敗要因・適性を重視。\n既存の土地活用アイデアと重複させない。<script>memo</script>";
  $password=bin2hex(random_bytes(10));$emails=[];
  for($i=0;$i<2;$i++){ $emails[]='content-test-'.bin2hex(random_bytes(7)).'@example.invalid';db_exec('INSERT INTO users(email,password_hash) VALUES(?,?)',[$emails[$i],password_hash($password,PASSWORD_DEFAULT)]);$uids[]=(int)db()->lastInsertId();}
- $id=content_create($uids[0],['keywords'=>"=HYPERLINK(\"evil\")\n<script>bad</script>",'notes'=>$notes]);$ids[]=$id;
+ $id=content_create($uids[0],['keywords'=>"=HYPERLINK(\"evil\")\n<script>bad</script>",'notes'=>$notes,'ai_prompts'=>'土地の活用方法を教えてください。']);$ids[]=$id;
  $calls=0;
  $chat=static function() use (&$calls){$calls++;return ['answer_text'=>'回答','text'=>'回答','search_queries'=>['検索クエリ'],'source_urls'=>['https://example.com/'],'model'=>'test'];};
  content_process(db_one('SELECT * FROM content_jobs WHERE id=?',[$id]),$chat,static function($job,$item,$evidence) use ($notes) {
      ensure($job['notes']===$notes,'notes persisted and passed to generator');
      ensure(str_contains(content_prompt($job,$item,$evidence),content_json($notes)),'notes in actual Codex prompt');
+     ensure($item['ai_prompts']['origin']==='manual','manual prompt origin');
+     ensure($evidence['openai']['responses'][0]['prompt']==='土地の活用方法を教えてください。','actual prompt retained');
      return fixture();
  });
  ensure($calls===4,'two APIs per keyword');ensure(db_one('SELECT status FROM content_jobs WHERE id=?',[$id])['status']==='completed','complete');
  ensure(is_file(content_artifact($id)),'artifact');
- $interrupted=content_create($uids[0],['keywords'=>"中断\n成功"]);$ids[]=$interrupted;
+ $saved=db_one('SELECT ai_prompts FROM content_items WHERE job_id=? ORDER BY position LIMIT 1',[$id]);
+ ensure(json_decode($saved['ai_prompts'],true)['prompts']===['土地の活用方法を教えてください。'],'resolved prompts persisted');
+ $interrupted=content_create($uids[0],['keywords'=>"中断\n成功",'ai_prompts'=>'土地活用について教えてください。']);$ids[]=$interrupted;
  db_exec("UPDATE content_items SET status='running' WHERE job_id=? AND position=1",[$interrupted]);
  content_process(db_one('SELECT * FROM content_jobs WHERE id=?',[$interrupted]),$chat,static fn()=>fixture());
  ensure($calls===6,'interrupted API not repeated');ensure(db_one('SELECT status FROM content_jobs WHERE id=?',[$interrupted])['status']==='partial','partial');
- $failed=content_create($uids[0],['keywords'=>'失敗']);$ids[]=$failed;
+ $failed=content_create($uids[0],['keywords'=>'失敗','ai_prompts'=>'土地活用について教えてください。']);$ids[]=$failed;
  content_process(db_one('SELECT * FROM content_jobs WHERE id=?',[$failed]),static fn()=>throw new RuntimeException('test failure'),static fn()=>throw new RuntimeException('should not generate'));
  ensure(db_one('SELECT status FROM content_jobs WHERE id=?',[$failed])['status']==='failed','failed');ensure(!is_file(content_artifact($failed)),'no failed download');
+ $inferred=content_create($uids[0],['keywords'=>'SEO対策とは','service'=>'SEO支援']);$ids[]=$inferred;
+ $inferenceCalls=0;
+ content_process(db_one('SELECT * FROM content_jobs WHERE id=?',[$inferred]),$chat,static fn()=>fixture(),static function($job,$item) use (&$inferenceCalls) {
+     $inferenceCalls++;
+     ensure($item['keyword']==='SEO対策とは'&&$job['service']==='SEO支援','inference receives context');
+     return ['prompts'=>['SEOとは何ですか？','SEOは何から始めますか？','SEOの効果はどう測りますか？']];
+ });
+ ensure($inferenceCalls===1&&$calls===12,'blank input infers once and calls each AI three times');
+ $saved=db_one('SELECT ai_prompts,evidence FROM content_items WHERE job_id=?',[$inferred]);
+ ensure(json_decode($saved['ai_prompts'],true)['origin']==='inferred','inferred questions persisted');
+ ensure(count(json_decode($saved['evidence'],true)['gemini']['responses'])===3,'question-level answers persisted');
+ ensure(db_one('SELECT status FROM content_jobs WHERE id=?',[$inferred])['status']==='completed','inferred task completes');
  ensure(request('/content-generation')[0]===302,'anonymous redirected');ensure(request('/content-generation?download='.$id)[0]===302,'anonymous download denied');
  foreach($emails as $i=>$email){
   $login=request('/?a=login&return=content-generation');$response=request('/?a=login&return=content-generation',['csrf'=>token($login[1]),'email'=>$email,'password'=>$password]);
@@ -56,16 +72,20 @@ try {
   ensure(!str_contains($body,'<script>memo</script>'),'notes escaped');
   ensure(!str_contains($body,h($notes)),'task list omits notes');
   ensure((bool)preg_match('/<textarea[^>]*name="notes"[^>]*>/', $body,$noteField)&&!str_contains($noteField[0],'required'),'optional notes textarea');
+  ensure((bool)preg_match('/<textarea[^>]*name="ai_prompts"[^>]*>/', $body,$promptField)&&!str_contains($promptField[0],'required'),'optional AI prompts textarea');
   $download=request('/content-generation?download='.$id);ensure($download[0]===($i===0?200:404),'download ownership');
   $statuses=request('/content-generation?format=status');ensure(str_contains($statuses[1],'completed')===($i===0),'status ownership');
   if($i===0){
    ensure(str_starts_with($download[1],'PK'),'xlsx');
    ensure(request('/content-generation',['keywords'=>'no csrf'])[0]===400,'csrf');
    ensure(request('/content-generation',['csrf'=>token($body),'keywords'=>implode("\n",range(1,11))])[0]===422,'HTTP limit');
+   $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'SEO対策とは','ai_prompts'=>"質問1\n質問2\n質問3\n質問4"]);
+   ensure($resp[0]===422&&str_contains($resp[1],"質問1\n質問2\n質問3\n質問4"),'prompt limit and retained input');
    $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'任意項目空欄']);ensure($resp[0]===302,'empty optionals create');
-   $created=db_one('SELECT * FROM content_jobs WHERE owner_user_id=? ORDER BY id DESC LIMIT 1',[$uids[0]]);$ids[]=(int)$created['id'];ensure($created['service']===''&&$created['audience']===''&&$created['site_url']===''&&$created['notes']==='','optionals stored blank');
-   $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'田舎 土地活用 成功例','notes'=>$notes]);ensure($resp[0]===302,'HTTP notes create');
+   $created=db_one('SELECT * FROM content_jobs WHERE owner_user_id=? ORDER BY id DESC LIMIT 1',[$uids[0]]);$ids[]=(int)$created['id'];ensure($created['service']===''&&$created['audience']===''&&$created['site_url']===''&&$created['notes']===''&&$created['ai_prompts']==='','optionals stored blank');
+   $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'田舎 土地活用 成功例','notes'=>$notes,'ai_prompts'=>"成功条件は？\n失敗の原因は？"]);ensure($resp[0]===302,'HTTP notes create');
    $created=db_one('SELECT * FROM content_jobs WHERE owner_user_id=? ORDER BY id DESC LIMIT 1',[$uids[0]]);$ids[]=(int)$created['id'];ensure($created['notes']===$notes,'HTTP notes saved with newlines');
+   ensure($created['ai_prompts']==="成功条件は？\n失敗の原因は？",'HTTP AI prompts saved');
    $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'','notes'=>$notes]);ensure($resp[0]===422&&str_contains($resp[1],h($notes)),'notes retained on validation error');
   }
   request('/?a=logout');

@@ -17,6 +17,10 @@ result = dict(title='土地に合う活用を選ぶ', related_keywords=['土地�
 keywords = ['田舎 土地活用 成功例', '田舎 土地活用 成功例', 'A/B:*?[]', '長いテーマ'*10, 'テンプレ']
 items = [dict(position=i+1, keyword=kw, status='completed', result=deepcopy(result), evidence={}) for i,kw in enumerate(keywords)]
 items[1]['result']['lead_guidance'] = ['読者の不安に共感し、成功条件を示す。','土地の適性を判断できるメリットを伝える。']
+manual_prompts = ['土地活用の成功条件は？具体例も教えてください。', '=未確認の数値は使わず、失敗要因を教えてください。']
+inferred_prompts = ['田舎の土地の適性をどう判断しますか？', '土地活用の需要はどう調べますか？', '活用方法を選ぶ際の注意点は何ですか？']
+items[1]['ai_prompts'] = json.dumps(dict(origin='manual', prompts=manual_prompts), ensure_ascii=False)
+items[2]['ai_prompts'] = dict(origin='inferred', prompts=inferred_prompts)
 with tempfile.TemporaryDirectory() as directory:
     output = Path(directory)/'test.xlsx'
     export(dict(job={'notes':'判断基準を重視する。'},items=items),output)
@@ -61,6 +65,13 @@ with tempfile.TemporaryDirectory() as directory:
         assert s['C2'].comment is None
         assert all('\n' not in str(s[f'{c}{r}'].value or '') for c in ['C','E'] for r in range(10,24))
     assert wb.worksheets[1]['C11'].value == items[1]['result']['lead_guidance'][0]
+    assert wb.worksheets[0]['B9'].value == '想定プロンプト' and wb.worksheets[0]['C9'].value == '未取得'
+    assert wb.worksheets[1]['C9'].value == '\n'.join('・' + prompt for prompt in manual_prompts)
+    assert wb.worksheets[2]['C9'].value == '\n'.join('・' + prompt for prompt in inferred_prompts)
+    assert wb.worksheets[1]['C9'].data_type == 's' and wb.worksheets[1]['C9'].alignment.wrap_text
+    assert wb.worksheets[1]['B9']._style == sample['B8']._style
+    assert wb.worksheets[1]['C9']._style == sample['C8']._style
+    assert wb.worksheets[2].row_dimensions[9].height >= sample.row_dimensions[8].height
     filled = deepcopy(items[0])
     filled['result']['related_keywords'] = [f'土地活用 条件{i}' for i in range(50)]
     filled['result']['competitors'] = [dict(rank=0,title=f'確認した競合{i}',url=f'https://example.com/{i}',word_count=0,headings=['土地の条件','注意点']) for i in range(10)]
@@ -86,5 +97,37 @@ with tempfile.TemporaryDirectory() as directory:
     assert all(not str(c.value).startswith(('表現：','形式：')) and c.comment is None for row in revised for c in row)
     complete_report = json.loads(full_output.with_suffix('.coverage.json').read_text())[0]
     assert complete_report['competitor_count'] == 10 and complete_report['related_keyword_count'] == 50
+
+    attributed = deepcopy(filled)
+    attributed['evidence'] = {
+        'openai': {'citation_urls': ['https://example.com/a'], 'source_urls': ['https://example.com/reference-only']},
+        'gemini': {'citation_urls': [], 'source_urls': []},
+    }
+    attributed['result']['sections'][0]['source_attributions'] = [
+        dict(source_name='自治体の土地活用ガイド', source_url='https://example.com/a',
+             supported_claim='用途地域によって建築できる建物が異なる。',
+             writing_guidance='自治体の土地活用ガイドによると用途地域の確認が必要であると、出典名を本文に示して説明する。',
+             origins=['openai_citation']),
+        dict(source_name='地域の需要調査', source_url='https://example.com/original-study',
+             supported_claim='調査対象地域の需要を示す資料であり、全国に一般化しない。',
+             writing_guidance='地域の需要調査を出典として、調査時期と対象地域を添えて説明する。',
+             origins=['additional_research']),
+    ]
+    attributed['result']['sections'][1]['source_attributions'] = []
+    attributed_output = Path(directory)/'attributed.xlsx'
+    export(dict(job={}, items=[attributed]), attributed_output)
+    attributed_sheet = openpyxl.load_workbook(attributed_output).active
+    outline = [str(row[0].value or '') for row in attributed_sheet.iter_rows(min_col=3, max_col=3)]
+    for attribution in attributed['result']['sections'][0]['source_attributions']:
+        assert '根拠として使う情報（' + attribution['source_name'] + '）：' + attribution['supported_claim'] in outline
+        assert '出典を示す執筆指示：' + attribution['writing_guidance'] in outline
+    urls = [row[0].value for row in attributed_sheet.iter_rows(min_col=5, max_col=5)]
+    assert urls.count('https://example.com/a') == 1
+    assert 'https://example.com/original-study' in urls
+    assert 'https://example.com/reference-only' not in urls  # Never export all AI candidates as accepted evidence.
+    assert outline.index('出典を示す執筆指示：' + attributed['result']['sections'][0]['source_attributions'][1]['writing_guidance']) < outline.index(reason)
+    assert outline.count('失敗要因を調べる') == 1
+    assert all(cell.comment is None for row in attributed_sheet for cell in row)
+    assert all('\n' not in str(row[0].value or '') for row in attributed_sheet.iter_rows(min_row=10, min_col=3, max_col=3))
 assert sentences('「失敗した？」と聞く。条件を調べる。') == ['「失敗した？」と聞く。','条件を調べる。']
-print('PASS: 5 themes/5 sheets, names, lead rows, sentence rows, reference rows, sample styles, no frozen panes')
+print('PASS: legacy and attributed outlines, source instructions and URLs, 5 themes/5 sheets, sample styles')

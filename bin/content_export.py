@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """One theme per sheet, using the supplied sample's row and cell styles."""
 import json
+import math
 import re
 import sys
+import unicodedata
 import zipfile
 from copy import copy, deepcopy
 from pathlib import Path
@@ -146,6 +148,19 @@ def export(payload, output):
             persona = '\n'.join('・' + line for line in sentences(persona))
         for cell, value in {'C2':item['keyword'], 'C3':'、'.join(result['related_keywords'][:3]), 'C6':result['title'], 'C8':persona}.items():
             put(sheet, cell, value)
+        resolved_prompts = item.get('ai_prompts')
+        if isinstance(resolved_prompts, str):
+            resolved_prompts = json.loads(resolved_prompts)
+        prompts = (resolved_prompts or {}).get('prompts', [])
+        style_row(sheet, sample, 9, 8)
+        put(sheet, 'B9', '想定プロンプト')
+        put(sheet, 'C9', '\n'.join('・' + prompt for prompt in prompts) if prompts else '未取得')
+        if not prompts:
+            report['unavailable'].append('想定プロンプト：保存された質問文なし')
+        width = max(1, sheet.column_dimensions['C'].width - 2)
+        lines = sum(max(1, math.ceil(sum(2 if unicodedata.east_asian_width(c) in 'FW' else 1 for c in line) / width))
+                    for line in sheet['C9'].value.splitlines())
+        sheet.row_dimensions[9].height = min(409.5, max(sample.row_dimensions[8].height or 51, lines * 16.5 + 8))
         # Row 10 is a heading, not the lead paragraph. Rows 11/12 describe how to write it.
         for row in range(10,14): style_row(sheet, sample, row, row)
         for cell in ['B10','C10','D10','E10','F10','B11']:
@@ -174,10 +189,17 @@ def export(payload, output):
                 points.extend(writing_instructions(point) if point.startswith(('形式：','表現：','形式:','表現:')) else [point])
             for instruction in writing_instructions(section.get('format', '')):
                 if instruction not in points: points.append(instruction)
+            attributions = section.get('source_attributions', [])
+            for attribution in attributions:
+                points.extend('根拠として使う情報（' + attribution['source_name'] + '）：' + claim
+                              for claim in sentences(attribution['supported_claim']))
+                points.extend('出典を示す執筆指示：' + instruction
+                              for instruction in sentences(attribution['writing_guidance']))
             # Reasons are ordinary cells at the bottom of this section, never Excel notes.
             reasons = sentences(section.get('llmo_reasons', []))
             points.extend('LLMOとして入れた理由：' + reason for reason in reasons)
-            urls = list(dict.fromkeys(url.strip() for value in section['sources'] for url in value.splitlines() if url.strip()))
+            source_values = section['sources'] + [a['source_url'] for a in attributions]
+            urls = list(dict.fromkeys(url.strip() for value in source_values for url in value.splitlines() if url.strip()))
             if not urls:
                 urls = ['未取得']
                 report['unavailable'].append(section['heading'] + '：参照URL未取得')
