@@ -6,6 +6,8 @@
     },
     "related_keywords": {
       "type": "array",
+      "maxItems": 3,
+      "description": "取得済みkeyword_suggestions.valuesから記事に必要な語を2〜3件選ぶ。取得できた候補が少ない場合はその件数まで。調査用検索クエリは含めない。",
       "items": {
         "type": "string"
       }
@@ -80,7 +82,7 @@
           },
           "format": {
             "type": "string",
-            "description": "何をどう書くかを示す具体的な執筆指示の文。例：成分・食品例・注意点の3列の表を入れる。「表現：」や名詞だけのラベルは禁止。pointsに同じ指示があれば空文字でよい。"
+            "description": "短い執筆指示。表は「（表の作成）比較表を作成」などと記す。pointsに同じ指示があれば空文字でよい。"
           },
           "sources": {
             "type": "array",

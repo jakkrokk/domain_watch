@@ -58,7 +58,7 @@ def writing_instructions(value):
     """Convert legacy format labels into actionable writing instructions."""
     value = re.sub(r'^(?:表現|形式)[：:]\s*', '', value.strip())
     if not value: return []
-    if re.search(r'(?:する|示す|まとめる|入れる|書く|伝える|置く|添える|並べる)[。.]?$', value):
+    if re.search(r'(?:する|示す|まとめる|入れる|書く|伝える|置く|添える|並べる|作成|記載|説明)[。.]?$', value):
         return sentences(value)
     instructions = []
     if '表' in value: instructions.append('表を入れ、上記の内容を項目ごとに整理して比較できるようにする。')
@@ -71,6 +71,27 @@ def writing_instructions(value):
     if '定義' in value: instructions.append('最初に用語の意味を短く説明し、具体例を添える。')
     if not instructions: instructions.append('最初に結論を短く書き、その後に上記の具体例や注意点を説明する。')
     return instructions
+
+
+def related_keywords(result):
+    suggestions = result.get('keyword_suggestions')
+    allowed = set(suggestions['values']) if suggestions else None
+    values = []
+    for value in result.get('related_keywords', []):
+        value = value.strip()
+        if not value or len(value) > 60 or re.search(r'https?://|\b(?:site|inurl|intitle|filetype):|[\r\n]', value, re.I):
+            continue
+        if allowed is not None and value not in allowed:
+            continue
+        if value not in values:
+            values.append(value)
+    return values
+
+
+def format_instruction(text):
+    if re.search(r'比較表|一覧表|表を|表に|表で', text) and not text.startswith('（表の作成）'):
+        return '（表の作成）' + text
+    return text
 
 
 def theme_title(keyword, used):
@@ -146,7 +167,8 @@ def export(payload, output):
         persona = result['audience']
         if not persona.lstrip().startswith(('・','-','•')):
             persona = '\n'.join('・' + line for line in sentences(persona))
-        for cell, value in {'C2':item['keyword'], 'C3':'、'.join(result['related_keywords'][:3]), 'C6':result['title'], 'C8':persona}.items():
+        selected_keywords = related_keywords(result)
+        for cell, value in {'C2':item['keyword'], 'C3':'、'.join(selected_keywords[:3]) or '未取得', 'C6':result['title'], 'C8':persona}.items():
             put(sheet, cell, value)
         resolved_prompts = item.get('ai_prompts')
         if isinstance(resolved_prompts, str):
@@ -161,17 +183,18 @@ def export(payload, output):
         lines = sum(max(1, math.ceil(sum(2 if unicodedata.east_asian_width(c) in 'FW' else 1 for c in line) / width))
                     for line in sheet['C9'].value.splitlines())
         sheet.row_dimensions[9].height = min(409.5, max(sample.row_dimensions[8].height or 51, lines * 16.5 + 8))
-        # Row 10 is a heading, not the lead paragraph. Rows 11/12 describe how to write it.
-        for row in range(10,14): style_row(sheet, sample, row, row)
+        style_row(sheet, sample, 10, 7)
+        # Leave a spacer after the prompts; only the outline columns move.
+        for row in range(11,15): style_row(sheet, sample, row, row-1)
         for cell in ['B10','C10','D10','E10','F10','B11']:
-            put(sheet, cell, sample[cell].value)
+            put(sheet, f'{cell[0]}{int(cell[1:])+1}', sample[cell].value)
         guidance = result.get('lead_guidance')
         if guidance is None:
             guidance = [f'「{item["keyword"]}」を調べる読者の悩みに共感し、結論と記事で扱う判断材料を示す。', LEAD_GUIDANCE[1]]
         if not isinstance(guidance, list) or len(guidance) != 2 or any(len(sentences([v])) != 1 for v in guidance):
             raise ValueError('Lead guidance must contain exactly two single-sentence instructions')
-        put(sheet, 'C11', guidance[0]); put(sheet, 'C12', guidance[1])
-        total, row = 200, 14
+        put(sheet, 'C12', guidance[0]); put(sheet, 'C13', guidance[1])
+        total, row = 200, 15
         for index, section in enumerate(result['sections']):
             is_h2 = section['level'] == 'H2'
             is_summary = is_h2 and index == len(result['sections'])-1 and bool(re.search(r'まとめ|おわりに', section['heading']))
@@ -186,18 +209,16 @@ def export(payload, output):
                 raise ValueError('Missing heading, outline content or planned character count')
             points = []
             for point in sentences(section['points']):
-                points.extend(writing_instructions(point) if point.startswith(('形式：','表現：','形式:','表現:')) else [point])
+                points.extend([format_instruction(p) for p in writing_instructions(point)] if point.startswith(('形式：','表現：','形式:','表現:')) else [format_instruction(point)])
             for instruction in writing_instructions(section.get('format', '')):
+                instruction = format_instruction(instruction)
                 if instruction not in points: points.append(instruction)
             attributions = section.get('source_attributions', [])
-            for attribution in attributions:
-                points.extend('根拠として使う情報（' + attribution['source_name'] + '）：' + claim
-                              for claim in sentences(attribution['supported_claim']))
-                points.extend('出典を示す執筆指示：' + instruction
-                              for instruction in sentences(attribution['writing_guidance']))
+            points.extend('LLMOのため出典を明示（' + name + '）'
+                          for name in dict.fromkeys(a['source_name'] for a in attributions))
             # Reasons are ordinary cells at the bottom of this section, never Excel notes.
             reasons = sentences(section.get('llmo_reasons', []))
-            points.extend('LLMOとして入れた理由：' + reason for reason in reasons)
+            points.extend('※LLMO用：' + reason for reason in reasons)
             source_values = section['sources'] + [a['source_url'] for a in attributions]
             urls = list(dict.fromkeys(url.strip() for value in source_values for url in value.splitlines() if url.strip()))
             if not urls:
@@ -207,7 +228,12 @@ def export(payload, output):
                 body_row = row + 1 + offset
                 style_row(sheet, sample, body_row, 15 if is_h2 and offset == 0 else 20)
                 if is_h2 and offset == 0: put(sheet, f'B{body_row}', '概要')
-                if offset < len(points): put(sheet, f'C{body_row}', points[offset])
+                if offset < len(points):
+                    put(sheet, f'C{body_row}', points[offset])
+                    if points[offset].startswith(('（可能なら）','(可能なら)','（表の作成）')):
+                        font = copy(sheet[f'C{body_row}'].font)
+                        font.color = 'FFFF0000'
+                        sheet[f'C{body_row}'].font = font
                 # Match E15: normal text, sample font/alignment/format, one URL per row.
                 sheet[f'E{body_row}']._style = copy(sample['E15']._style)
                 if offset < len(urls):
@@ -218,6 +244,10 @@ def export(payload, output):
             total += section['word_count']
             row += max(1, len(points), len(urls)) + 2  # One empty row before the next heading.
             style_row(sheet, sample, row-1, 13)
+        for col in range(2,7):
+            border = copy(sheet.cell(row-2, col).border)
+            border.bottom = copy(sample['C15'].border.bottom)
+            sheet.cell(row-2, col).border = border
         sheet['C4'] = sample['C4'].value
         totals.append(total)
         put(sheet, 'H9', template['H9'].value)
@@ -244,11 +274,12 @@ def export(payload, output):
         competitor_end = r-1
         put(sheet, 'N10', 'No.')
         put(sheet, 'H23', template['H23'].value)
-        queries = list(dict.fromkeys([q for e in evidence.values() for q in e.get('search_queries',[])] + [f['query'] for f in result.get('fanout', [])] + result['related_keywords']))
+        suggestions = result.get('keyword_suggestions')
+        queries = list(dict.fromkeys(suggestions['values'] if suggestions else selected_keywords))
         for r in range(25,75):
             for col in 'HIJK': put(sheet, f'{col}{r}', None)
         report['related_keyword_count'] = min(len(queries), 50)
-        if len(queries) < 50: report['unavailable'].append(f'関連キーワード：{len(queries)}/50件取得')
+        if not queries: report['unavailable'].append('関連キーワード：検索候補未取得')
         report['unavailable'].append('検索回数・CPC：未計測のため0')
         for r in range(25 + report['related_keyword_count'],75):
             put(sheet, f'H{r}', r-24); put(sheet, f'I{r}', '未取得'); put(sheet, f'J{r}', 0); put(sheet, f'K{r}', 0)

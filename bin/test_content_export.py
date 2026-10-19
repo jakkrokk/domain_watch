@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import json
+import os
 import tempfile
 from copy import copy, deepcopy
 from pathlib import Path
 import openpyxl
-from content_export import export, sentences, ROOT
+from content_export import export, sentences, related_keywords, ROOT
 
 sample = openpyxl.load_workbook(ROOT / 'resources/content-generation/template.xlsx')['サンプル']
 result = dict(title='土地に合う活用を選ぶ', related_keywords=['土地の適性'], audience='土地所有者',
@@ -45,26 +46,28 @@ with tempfile.TemporaryDirectory() as directory:
         assert all(s[f'I{r}'].value for r in range(11,21))
         assert all(s[f'I{r}'].value for r in range(25,75))
         assert all(c.comment is None for row in s for c in row)
-        assert s['E15'].alignment.horizontal == 'fill'
-        assert not any(c.has_style for row in s.iter_rows(min_row=22,max_col=6) for c in row)
+        assert s['E16'].alignment.horizontal == 'fill'
+        assert not any(c.has_style for row in s.iter_rows(min_row=23,max_col=6) for c in row)
 
-        assert s['C10'].value == 'リード文' and s['B11'].value == '概要'
-        assert s['C11'].value and s['C12'].value and s['C13'].value is None
-        assert '旧形式' not in s['C11'].value
-        assert [s[f'C{r}'].value for r in range(15,19)] == ['接道を確認する。','需要も調べる。','・人口','・交通量']
-        assert s['C19'].value is None and s['B20'].value == '小見出し(H3)'
-        assert s['E14'].value == '参照URL' and s['E15'].value == 'https://example.com/a' and s['E16'].value == 'https://example.com/b'
-        assert s['E20'].value == '参照URL' and s['E21'].value == 'https://example.com/c'
-        assert s['F14'].value == 'クライアント様コメント' and s['F20'].value is None
-        for cell, ref in [('C10','C10'),('C11','C11'),('E14','E14'),('E15','E15'),('E20','E19'),('C20','C19')]:
+        assert all(s.cell(10,c).value is None for c in range(2,7))
+        assert s.row_dimensions[10].height == sample.row_dimensions[7].height
+        assert s['C11'].value == 'リード文' and s['B12'].value == '概要'
+        assert s['C12'].value and s['C13'].value and s['C14'].value is None
+        assert '旧形式' not in s['C12'].value
+        assert [s[f'C{r}'].value for r in range(16,20)] == ['接道を確認する。','需要も調べる。','・人口','・交通量']
+        assert s['C20'].value is None and s['B21'].value == '小見出し(H3)'
+        assert s['E15'].value == '参照URL' and s['E16'].value == 'https://example.com/a' and s['E17'].value == 'https://example.com/b'
+        assert s['E21'].value == '参照URL' and s['E22'].value == 'https://example.com/c'
+        assert s['F15'].value == 'クライアント様コメント' and s['F21'].value is None
+        for cell, ref in [('C11','C10'),('C12','C11'),('E15','E14'),('E16','E15'),('E21','E19'),('C21','C19')]:
             for attr in ['font','fill','border','alignment','number_format']:
-                if cell == 'E15' and attr == 'alignment': continue
+                if cell == 'E16' and attr == 'alignment': continue
                 assert copy(getattr(s[cell],attr)) == copy(getattr(sample[ref],attr)), (cell,attr)
-        assert s.row_dimensions[10].height == sample.row_dimensions[10].height
+        assert s.row_dimensions[11].height == sample.row_dimensions[10].height
         assert s.column_dimensions['E'].width == sample.column_dimensions['E'].width
         assert s['C2'].comment is None
         assert all('\n' not in str(s[f'{c}{r}'].value or '') for c in ['C','E'] for r in range(10,24))
-    assert wb.worksheets[1]['C11'].value == items[1]['result']['lead_guidance'][0]
+    assert wb.worksheets[1]['C12'].value == items[1]['result']['lead_guidance'][0]
     assert wb.worksheets[0]['B9'].value == '想定プロンプト' and wb.worksheets[0]['C9'].value == '未取得'
     assert wb.worksheets[1]['C9'].value == '\n'.join('・' + prompt for prompt in manual_prompts)
     assert wb.worksheets[2]['C9'].value == '\n'.join('・' + prompt for prompt in inferred_prompts)
@@ -92,7 +95,7 @@ with tempfile.TemporaryDirectory() as directory:
     revised = openpyxl.load_workbook(full_output).active
     texts = [revised[f'C{r}'].value for r in range(14,25)]
     instruction = '上記の要点や確認事項を箇条書きで示す。'
-    reason = 'LLMOとして入れた理由：AI回答の比較表を参考に、土地条件を比較できるようにする。'
+    reason = '※LLMO用：AI回答の比較表を参考に、土地条件を比較できるようにする。'
     assert instruction in texts and reason in texts and texts.index(reason) > texts.index(instruction)
     assert all(not str(c.value).startswith(('表現：','形式：')) and c.comment is None for row in revised for c in row)
     complete_report = json.loads(full_output.with_suffix('.coverage.json').read_text())[0]
@@ -119,15 +122,37 @@ with tempfile.TemporaryDirectory() as directory:
     attributed_sheet = openpyxl.load_workbook(attributed_output).active
     outline = [str(row[0].value or '') for row in attributed_sheet.iter_rows(min_col=3, max_col=3)]
     for attribution in attributed['result']['sections'][0]['source_attributions']:
-        assert '根拠として使う情報（' + attribution['source_name'] + '）：' + attribution['supported_claim'] in outline
-        assert '出典を示す執筆指示：' + attribution['writing_guidance'] in outline
+        assert 'LLMOのため出典を明示（' + attribution['source_name'] + '）' in outline
+    assert not any(text.startswith(('根拠として','出典を示す執筆指示','LLMOとして入れた理由')) for text in outline)
     urls = [row[0].value for row in attributed_sheet.iter_rows(min_col=5, max_col=5)]
     assert urls.count('https://example.com/a') == 1
     assert 'https://example.com/original-study' in urls
     assert 'https://example.com/reference-only' not in urls  # Never export all AI candidates as accepted evidence.
-    assert outline.index('出典を示す執筆指示：' + attributed['result']['sections'][0]['source_attributions'][1]['writing_guidance']) < outline.index(reason)
+    assert outline.index('LLMOのため出典を明示（地域の需要調査）') < outline.index(reason)
     assert outline.count('失敗要因を調べる') == 1
     assert all(cell.comment is None for row in attributed_sheet for cell in row)
     assert all('\n' not in str(row[0].value or '') for row in attributed_sheet.iter_rows(min_row=10, min_col=3, max_col=3))
+    attributed['ai_prompts'] = dict(origin='inferred', prompts=inferred_prompts)
+    attributed['result']['keyword_suggestions'] = dict(status='completed', values=['土地活用 成功例','土地活用 費用','土地活用 失敗'])
+    attributed['result']['related_keywords'] = ['site:example.com data', 'https://example.com', '土地活用 費用','土地活用 成功例','無関係な候補']
+    attributed['evidence']['openai']['search_queries'] = ['site:example.com research']
+    attributed['result']['sections'][0]['format'] = '（表の作成）土地条件の比較表を作成'
+    attributed['result']['sections'][1]['points'] += ['（可能なら）営業担当への取材で、実際の相談例を加える。']
+    attributed['result']['sections'].append(dict(level='H2',heading='まとめ：土地に合う方法を選ぶ',word_count=100,
+        points=['土地の条件と需要を確認する。','取り組みやすい方法を選ぶ。'],format='',sources=['https://example.com/summary']))
+    export(dict(job={},items=[attributed]),attributed_output)
+    checked = openpyxl.load_workbook(attributed_output).active
+    assert checked['C3'].value == '土地活用 費用、土地活用 成功例'
+    assert checked['I25'].value == '土地活用 成功例'
+    assert 'site:example.com research' not in [checked[f'I{r}'].value for r in range(25,75)]
+    optional = next(c for row in checked.iter_rows(min_col=3,max_col=3) for c in row if str(c.value).startswith('（可能なら）'))
+    table = next(c for row in checked.iter_rows(min_col=3,max_col=3) for c in row if str(c.value).startswith('（表の作成）'))
+    assert optional.font.color.rgb == 'FFFF0000' and table.font.color.rgb == 'FFFF0000'
+    last = max(r for r in range(15,checked.max_row+1) if checked.cell(r,3).value)
+    assert all(checked.cell(last,col).border.bottom.style == 'thin' for col in range(2,7))
+    assert checked.cell(last,6).border.right.style == 'thin'
+    if os.environ.get('CONTENT_EXPORT_TEST_OUTPUT'):
+        export(dict(job={},items=[attributed]),Path(os.environ['CONTENT_EXPORT_TEST_OUTPUT']))
 assert sentences('「失敗した？」と聞く。条件を調べる。') == ['「失敗した？」と聞く。','条件を調べる。']
+assert related_keywords(dict(related_keywords=['site:example.com SEO','SEO 費用','SEO 費用','https://example.com'])) == ['SEO 費用']
 print('PASS: legacy and attributed outlines, source instructions and URLs, 5 themes/5 sheets, sample styles')

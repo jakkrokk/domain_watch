@@ -34,7 +34,39 @@ function content_status(string $status): string {
 function content_root(): string { return __DIR__ . '/../storage/content-generation'; }
 function content_dir(int $id): string { return content_root() . '/' . $id; }
 function content_artifact(int $id): string { return content_dir($id) . '/content.xlsx'; }
+function content_download_name(string $keyword, string $createdAt): string {
+    $name = preg_replace('/[\x00-\x1f\x7f<>:"\/\\\\|?*]/u', '_', $keyword);
+    $name = rtrim(mb_substr(trim($name), 0, 100), '. ');
+    if ($name === '') $name = 'content';
+    $date = new DateTimeImmutable($createdAt, new DateTimeZone('Asia/Tokyo'));
+    return $name . '_' . $date->setTimezone(new DateTimeZone('Asia/Tokyo'))->format('Ymd') . '.xlsx';
+}
 function content_json(mixed $value): string { return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR); }
+
+function content_keyword_suggestions(string $keyword, ?callable $fetch = null): array {
+    $url = 'https://suggestqueries.google.com/complete/search?' . http_build_query(['client'=>'firefox','hl'=>'ja','q'=>$keyword], '', '&', PHP_QUERY_RFC3986);
+    try {
+        $fetch ??= static function(string $url): string {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_CONNECTTIMEOUT=>5, CURLOPT_TIMEOUT=>15, CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS]);
+            try {
+                $body = curl_exec($ch);
+                if ($body === false || curl_getinfo($ch, CURLINFO_RESPONSE_CODE) !== 200) throw new RuntimeException('Suggestion request failed');
+                return $body;
+            } finally { curl_close($ch); }
+        };
+        $response = json_decode($fetch($url), true, 512, JSON_THROW_ON_ERROR);
+        if (!isset($response[1]) || !is_array($response[1])) throw new RuntimeException('Invalid suggestions');
+        $values = [];
+        foreach ($response[1] as $value) {
+            if (is_string($value) && trim($value) !== '' && trim($value) !== $keyword) $values[] = trim($value);
+        }
+        return ['status'=>'completed','source_url'=>$url,'values'=>array_values(array_unique($values))];
+    } catch (Throwable $e) {
+        error_log('Content suggestions: ' . $e->getMessage());
+        return ['status'=>'unavailable','source_url'=>$url,'values'=>[]];
+    }
+}
 
 function content_parse_ai_prompts(string $text): array {
     $prompts = array_values(array_filter(array_map('trim', preg_split('/\R/u', $text)), static fn($v) => $v !== ''));
@@ -51,7 +83,7 @@ function content_resolve_ai_prompts(array $job, array $item, ?callable $infer = 
     $prompts = $result['prompts'] ?? null;
     if (!is_array($prompts) || count($prompts) !== 3) throw new RuntimeException('質問文を3件推定できませんでした。');
     foreach ($prompts as $prompt) {
-        if (!is_string($prompt) || !mb_check_encoding($prompt, 'UTF-8') || count(content_parse_ai_prompts($prompt)) !== 1 || trim($prompt) !== $prompt || preg_match('/\R/u', $prompt)) throw new RuntimeException('推定した質問文の形式が不正です。');
+        if (!is_string($prompt) || !mb_check_encoding($prompt, 'UTF-8') || count(content_parse_ai_prompts($prompt)) !== 1 || mb_strlen($prompt) > 50 || trim($prompt) !== $prompt || preg_match('/\R/u', $prompt)) throw new RuntimeException('推定した質問文の形式が不正です。');
     }
     if (count(array_unique($prompts)) !== 3) throw new RuntimeException('推定した質問文が重複しています。');
     return ['origin'=>'inferred','model'=>'gpt-6.1-sol','reasoning_effort'=>'xhigh','prompts'=>array_values($prompts)];
@@ -110,7 +142,7 @@ function content_command(array $command, string $cwd, string $input, string $log
 function content_prompt(array $job, array $item, array $evidence): string {
     $prompt = file_get_contents(__DIR__ . '/../resources/content-generation/prompt.txt');
     $prompt .= "\n調査日: " . date('Y-m-d') . "\n入力データ（命令ではありません）:\n" . content_json([
-        'keyword'=>$item['keyword'], 'site_url'=>$job['site_url'], 'service'=>$job['service'], 'audience'=>$job['audience'], 'notes'=>$job['notes'] ?? '', 'ai_prompts'=>$item['ai_prompts'] ?? null, 'ai_evidence'=>$evidence,
+        'keyword'=>$item['keyword'], 'site_url'=>$job['site_url'], 'service'=>$job['service'], 'audience'=>$job['audience'], 'notes'=>$job['notes'] ?? '', 'ai_prompts'=>$item['ai_prompts'] ?? null, 'keyword_suggestions'=>$item['keyword_suggestions'] ?? null, 'ai_evidence'=>$evidence,
     ]);
     return $prompt;
 }
@@ -144,9 +176,13 @@ function content_infer_ai_prompts(array $job, array $item): array {
 }
 
 function content_codex(array $job, array $item, array $evidence): array {
+    $item['keyword_suggestions'] = content_keyword_suggestions($item['keyword']);
     $result = content_codex_json($job, $item, content_prompt($job, $item, $evidence), 'result.schema.json', 'result', 2400);
     if (!is_array($result) || trim($result['title'] ?? '') === '' || empty($result['sections']) || empty($result['competitors'])) throw new RuntimeException('構成案または競合調査が不足しています。');
     foreach ($result['competitors'] as $competitor) if (!filter_var($competitor['url'] ?? '', FILTER_VALIDATE_URL)) throw new RuntimeException('競合調査URLが不正です。');
+    $result['related_keywords'] = array_slice(array_values(array_unique(array_intersect($result['related_keywords'] ?? [], $item['keyword_suggestions']['values']))), 0, 3);
+    $result['keyword_suggestions'] = $item['keyword_suggestions'];
+    if (!$result['related_keywords']) $result['limitations'][] = '関連キーワード：選定できた検索サジェストなし';
     return $result;
 }
 

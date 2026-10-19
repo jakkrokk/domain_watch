@@ -11,7 +11,9 @@ if (isset($_GET['download'])) {
     if (!$job || !in_array($job['status'], ['completed','partial'], true) || !is_file(content_artifact($id))) { http_response_code(404); exit('ファイルが見つかりません。'); }
     session_write_close();
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="content-generation-' . $id . '.xlsx"');
+    $firstItem = db_one('SELECT keyword FROM content_items WHERE job_id=? ORDER BY position LIMIT 1', [$id]);
+    $filename = content_download_name($firstItem['keyword'] ?? 'content', $job['created_at']);
+    header('Content-Disposition: attachment; filename="content.xlsx"; filename*=UTF-8\'\'' . rawurlencode($filename));
     header('X-Content-Type-Options: nosniff');
     header('Content-Length: ' . filesize(content_artifact($id)));
     readfile(content_artifact($id)); exit;

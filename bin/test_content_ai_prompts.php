@@ -31,9 +31,14 @@ $resolved = content_resolve_ai_prompts($job, $item, static function($receivedJob
 });
 check($inferenceCalls === 1 && $resolved['prompts'] === $inferredPrompts, 'Infer exactly three prompts');
 check($resolved['model'] === 'gpt-6.1-sol' && $resolved['reasoning_effort'] === 'xhigh' && $resolved['origin'] === 'inferred', 'Record inference settings');
-foreach ([[], ['a','b'], ['a','b','c','d'], ['a','a','b'], ['a',null,'c'], ['a',"b\nc",'d'], ['a',' ','c'], ['a',str_repeat('あ',1001),'c']] as $invalid) {
+foreach ([[], ['a','b'], ['a','b','c','d'], ['a','a','b'], ['a',null,'c'], ['a',"b\nc",'d'], ['a',' ','c'], ['a',str_repeat('あ',51),'c']] as $invalid) {
     rejects(fn()=>content_resolve_ai_prompts($job,$item,static fn()=>['prompts'=>$invalid]), 'Invalid inference accepted');
 }
+check(content_download_name('SEO対策とは','2026-10-19 23:59:00') === 'SEO対策とは_20261019.xlsx', 'Keyword and registration date filename');
+check(content_download_name("a/b\r\n\"c",'2026-10-19') === 'a_b___c_20261019.xlsx', 'Safe download filename');
+$suggestions = content_keyword_suggestions('SEO対策',static fn()=>json_encode(['SEO対策',['SEO対策','SEO対策 費用','SEO対策 やり方','SEO対策 費用']]));
+check($suggestions['values'] === ['SEO対策 費用','SEO対策 やり方'], 'Actual suggestions retain order and remove duplicates');
+check(content_keyword_suggestions('SEO',static fn()=>'{invalid')['status'] === 'unavailable', 'Suggestion errors stay unavailable');
 
 $calls = [];
 $snapshots = [];
