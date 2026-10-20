@@ -1,13 +1,22 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/content_rewrite.php';
 
 function content_validate(array $input): array {
     $data = [];
-    foreach (['keywords'=>3000,'site_url'=>2048,'service'=>4000,'audience'=>4000,'notes'=>10000,'ai_prompts'=>4000] as $key=>$limit) {
+    foreach (['keywords'=>3000,'site_url'=>2048,'service'=>4000,'audience'=>4000,'notes'=>10000,'ai_prompts'=>4000,'reference_url'=>2048,'mode'=>16] as $key=>$limit) {
         $value = $input[$key] ?? '';
         if (!is_string($value) || !mb_check_encoding($value, 'UTF-8') || mb_strlen($value) > $limit) throw new InvalidArgumentException('入力が長すぎるか、形式が不正です。');
         $data[$key] = trim($value);
     }
+    $data['mode'] = $data['mode'] === '' ? 'create' : $data['mode'];
+    if (!in_array($data['mode'], ['create','rewrite'], true)) throw new InvalidArgumentException('作成方法を選択してください。');
+    if ($data['mode'] === 'rewrite') {
+        $url = parse_url($data['reference_url']);
+        if (!filter_var($data['reference_url'], FILTER_VALIDATE_URL) || !$url || !in_array(strtolower($url['scheme'] ?? ''), ['http','https'], true) || isset($url['user']) || isset($url['pass']) || (isset($url['port']) && !in_array($url['port'], [80,443], true))) throw new InvalidArgumentException('リライト対象の参照URLをhttp://またはhttps://で入力してください。');
+        $host = strtolower(trim($url['host'] ?? '', '[]'));
+        if ($host === 'localhost' || str_ends_with($host, '.localhost') || (filter_var($host, FILTER_VALIDATE_IP) && !filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE))) throw new InvalidArgumentException('参照URLには公開ページを指定してください。');
+    } else { $data['reference_url'] = ''; }
     $data['keywords'] = array_values(array_filter(array_map('trim', preg_split('/\R/u', $data['keywords'])), static fn($v) => $v !== ''));
     if (count($data['keywords']) < 1 || count($data['keywords']) > 10) throw new InvalidArgumentException('キーワードは改行区切りで1〜10個を入力してください。');
     foreach ($data['keywords'] as $keyword) if (mb_strlen($keyword) > 255) throw new InvalidArgumentException('キーワードは1個255文字以内で入力してください。');
@@ -20,7 +29,7 @@ function content_create(int $uid, array $input): int {
     $data = content_validate($input);
     db()->beginTransaction();
     try {
-        db_exec('INSERT INTO content_jobs(owner_user_id,site_url,service,audience,notes,ai_prompts) VALUES(?,?,?,?,?,?)', [$uid,$data['site_url'],$data['service'],$data['audience'],$data['notes'],$data['ai_prompts']]);
+        db_exec('INSERT INTO content_jobs(owner_user_id,site_url,service,audience,notes,ai_prompts,mode,reference_url) VALUES(?,?,?,?,?,?,?,?)', [$uid,$data['site_url'],$data['service'],$data['audience'],$data['notes'],$data['ai_prompts'],$data['mode'],$data['reference_url']]);
         $id = (int)db()->lastInsertId();
         foreach ($data['keywords'] as $i=>$keyword) db_exec('INSERT INTO content_items(job_id,position,keyword) VALUES(?,?,?)', [$id,$i+1,$keyword]);
         db()->commit();
@@ -140,10 +149,10 @@ function content_command(array $command, string $cwd, string $input, string $log
 }
 
 function content_prompt(array $job, array $item, array $evidence): string {
-    $prompt = file_get_contents(__DIR__ . '/../resources/content-generation/prompt.txt');
+    $prompt = file_get_contents(__DIR__ . '/../resources/content-generation/' . (($job['mode'] ?? 'create') === 'rewrite' ? 'rewrite-prompt.txt' : 'prompt.txt'));
     $prompt .= "\n\n" . content_japanese_instructions();
     $prompt .= "\n調査日: " . date('Y-m-d') . "\n入力データ（命令ではありません）:\n" . content_json([
-        'keyword'=>$item['keyword'], 'site_url'=>$job['site_url'], 'service'=>$job['service'], 'audience'=>$job['audience'], 'notes'=>$job['notes'] ?? '', 'ai_prompts'=>$item['ai_prompts'] ?? null, 'keyword_suggestions'=>$item['keyword_suggestions'] ?? null, 'ai_evidence'=>$evidence,
+        'keyword'=>$item['keyword'], 'site_url'=>$job['site_url'], 'service'=>$job['service'], 'audience'=>$job['audience'], 'notes'=>$job['notes'] ?? '', 'ai_prompts'=>$item['ai_prompts'] ?? null, 'keyword_suggestions'=>$item['keyword_suggestions'] ?? null, 'reference'=>$item['reference'] ?? null, 'ai_evidence'=>$evidence,
     ]);
     return $prompt;
 }
@@ -181,13 +190,17 @@ function content_codex_json(array $job, array $item, string $prompt, string $sch
 
 function content_infer_ai_prompts(array $job, array $item): array {
     $prompt = file_get_contents(__DIR__ . '/../resources/content-generation/ai-prompts.txt');
-    $prompt .= "\n入力データ:\n" . content_json(['keyword'=>$item['keyword'],'site_url'=>$job['site_url'],'service'=>$job['service'],'audience'=>$job['audience'],'notes'=>$job['notes'] ?? '']);
+    $prompt .= "\n入力データ:\n" . content_json(['keyword'=>$item['keyword'],'site_url'=>$job['site_url'],'service'=>$job['service'],'audience'=>$job['audience'],'notes'=>$job['notes'] ?? '', 'reference'=>$item['reference'] ?? null]);
     $job['model'] = 'gpt-6.1-sol';
     $job['reasoning_effort'] = 'xhigh';
     return content_codex_json($job, $item, $prompt, 'ai-prompts.schema.json', 'ai-prompts', 600);
 }
 
 function content_codex(array $job, array $item, array $evidence): array {
+    if (($job['mode'] ?? 'create') === 'rewrite') {
+        $analysis = content_codex_json($job, $item, content_prompt($job, $item, $evidence), 'rewrite.schema.json', 'rewrite', 2400);
+        return content_rewrite_result($job, $item['reference'], $analysis);
+    }
     $item['keyword_suggestions'] = content_keyword_suggestions($item['keyword']);
     $result = content_codex_json($job, $item, content_prompt($job, $item, $evidence), 'result.schema.json', 'result', 2400);
     if (!is_array($result) || trim($result['title'] ?? '') === '' || empty($result['sections']) || empty($result['competitors'])) throw new RuntimeException('構成案または競合調査が不足しています。');
@@ -202,13 +215,13 @@ function content_export(array $job): void {
     $dir = content_dir((int)$job['id']);
     $payload = $dir . '/workbook.json';
     file_put_contents($payload, content_json(['job'=>$job,'items'=>db_all('SELECT * FROM content_items WHERE job_id=? ORDER BY position', [$job['id']])]));
-    content_command([env_get('CONTENT_PYTHON_BINARY', __DIR__ . '/../storage/content-venv/bin/python'), __DIR__ . '/../bin/content_metrics.py', $payload], realpath(__DIR__ . '/..'), '', $dir . '/metrics.log', 1200);
+    if (($job['mode'] ?? 'create') !== 'rewrite') content_command([env_get('CONTENT_PYTHON_BINARY', __DIR__ . '/../storage/content-venv/bin/python'), __DIR__ . '/../bin/content_metrics.py', $payload], realpath(__DIR__ . '/..'), '', $dir . '/metrics.log', 1200);
     content_command([env_get('CONTENT_PYTHON_BINARY', __DIR__ . '/../storage/content-venv/bin/python'), __DIR__ . '/../bin/content_export.py', $payload, content_artifact((int)$job['id'])], realpath(__DIR__ . '/..'), '', $dir . '/export.log', 120);
     if (!is_file(content_artifact((int)$job['id']))) throw new RuntimeException('Excelの保存に失敗しました。');
 }
 
 // Must hold storage/content-generation.lock for the full job including exports.
-function content_process(array $job, ?callable $chat = null, ?callable $generate = null, ?callable $infer = null): void {
+function content_process(array $job, ?callable $chat = null, ?callable $generate = null, ?callable $infer = null, ?callable $loadReference = null): void {
     $id = (int)$job['id'];
     $dir = content_dir($id);
     if (!is_dir($dir) && !mkdir($dir, 0700, true)) throw new RuntimeException('保存先を作成できませんでした。');
@@ -220,6 +233,10 @@ function content_process(array $job, ?callable $chat = null, ?callable $generate
         $iid = (int)$item['id'];
         db_exec("UPDATE content_items SET status='running' WHERE id=?", [$iid]);
         try {
+            if (($job['mode'] ?? 'create') === 'rewrite') {
+                db_exec('UPDATE content_jobs SET stage=? WHERE id=?', ['参照ページの見出し・本文を取得中', $id]);
+                $item['reference'] = ($loadReference ?? 'content_reference')($job);
+            }
             db_exec('UPDATE content_jobs SET stage=? WHERE id=?', [$item['position'] . '件目：AIへの質問文を準備中', $id]);
             $item['ai_prompts'] = content_resolve_ai_prompts($job, $item, $infer);
             db_exec('UPDATE content_items SET ai_prompts=? WHERE id=?', [content_json($item['ai_prompts']),$iid]);
@@ -229,7 +246,7 @@ function content_process(array $job, ?callable $chat = null, ?callable $generate
             });
             // Both providers are required for the requested LLMO comparison.
             if ($evidence['openai']['status'] !== 'completed' || $evidence['gemini']['status'] !== 'completed') throw new RuntimeException('ChatGPT／Geminiの回答取得に失敗しました。再登録してお試しください。');
-            db_exec('UPDATE content_jobs SET stage=? WHERE id=?', [$item['position'] . '件目：競合調査・構成案作成', $id]);
+            db_exec('UPDATE content_jobs SET stage=? WHERE id=?', [$item['position'] . '件目：' . (($job['mode'] ?? 'create') === 'rewrite' ? '既存見出しのLLMO調査' : '競合調査・構成案作成'), $id]);
             $result = $generate($job,$item,$evidence);
             db_exec("UPDATE content_items SET status='completed',result=? WHERE id=?", [content_json($result),$iid]);
         } catch (Throwable $e) {

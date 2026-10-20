@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "audience": {"type": "string"},
+    "llmo_analysis": {"type": "string"},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_index": {"type": "integer", "minimum": 1},
+          "observation": {"type": "string"},
+          "comments": {"type": "array", "items": {"type": "string"}},
+          "sources": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["source_index", "observation", "comments", "sources"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["audience", "llmo_analysis", "limitations", "sections"],
+  "additionalProperties": false
+}

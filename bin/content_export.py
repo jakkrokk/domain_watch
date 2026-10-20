@@ -142,10 +142,14 @@ def export(payload, output):
     for item in completed:
         result = json.loads(item['result']) if isinstance(item['result'], str) else item['result']
         evidence = json.loads(item['evidence']) if isinstance(item['evidence'], str) else (item['evidence'] or {})
+        is_rewrite = result.get('mode', job.get('mode', 'create')) == 'rewrite'
         for key in ['title', 'audience']:
             if not str(result.get(key, '')).strip(): raise ValueError('Missing required field: ' + key)
         if not result.get('sections'): raise ValueError('Missing outline')
         sheet = wb.copy_worksheet(template)
+        if is_rewrite:
+            sheet.column_dimensions['E'].width = 50
+            sheet.column_dimensions['F'].width = 80
         # copy_worksheet does not copy sheet views or print options.
         sheet.views = deepcopy(template.views)
         sheet.print_options = copy(template.print_options)
@@ -170,6 +174,11 @@ def export(payload, output):
         selected_keywords = related_keywords(result)
         for cell, value in {'C2':item['keyword'], 'C3':'、'.join(selected_keywords[:3]) or '未取得', 'C6':result['title'], 'C8':persona}.items():
             put(sheet, cell, value)
+        if is_rewrite:
+            put(sheet, 'B3', '参照URL')
+            put(sheet, 'C3', result['reference']['url'])
+            put(sheet, 'B4', '既存見出し数')
+            put(sheet, 'C4', len(result['sections']))
         resolved_prompts = item.get('ai_prompts')
         if isinstance(resolved_prompts, str):
             resolved_prompts = json.loads(resolved_prompts)
@@ -194,18 +203,25 @@ def export(payload, output):
         if not isinstance(guidance, list) or len(guidance) != 2 or any(len(sentences([v])) != 1 for v in guidance):
             raise ValueError('Lead guidance must contain exactly two single-sentence instructions')
         put(sheet, 'C12', guidance[0]); put(sheet, 'C13', guidance[1])
+        if is_rewrite:
+            put(sheet, 'B11', '調査方針'); put(sheet, 'C11', 'リライト（LLMO調査）'); put(sheet, 'D11', None)
+            put(sheet, 'F11', 'LLMO改善コメント')
+            put(sheet, 'C1', '参照ページ取得：' + result['reference'].get('fetched_at', '未取得'))
         total, row = 200, 15
         for index, section in enumerate(result['sections']):
             is_h2 = section['level'] == 'H2'
             is_summary = is_h2 and index == len(result['sections'])-1 and bool(re.search(r'まとめ|おわりに', section['heading']))
             heading_row = 183 if is_summary else (14 if is_h2 else 19)
             style_row(sheet, sample, row, heading_row)
-            put(sheet, f'B{row}', 'まとめ(H2)' if is_summary else ('見出し(H2)' if is_h2 else '小見出し(H3)'))
+            put(sheet, f'B{row}', 'まとめ(H2)' if is_summary else ('見出し(H2)' if is_h2 else '小見出し(' + section['level'] + ')'))
             put(sheet, f'C{row}', section['heading'])
-            put(sheet, f'D{row}', section['word_count'])
+            put(sheet, f'D{row}', None if is_rewrite else section['word_count'])
             put(sheet, f'E{row}', '参照URL')
-            if is_h2: put(sheet, f'F{row}', 'クライアント様コメント')
-            if not section['heading'].strip() or not section['points'] or section['word_count'] <= 0:
+            if is_rewrite:
+                sheet[f'F{row}']._style = copy(sample['F14']._style)
+                sheet[f'F{row}'].border = copy(sample['E14'].border)
+            if is_rewrite or is_h2: put(sheet, f'F{row}', 'LLMO改善コメント' if is_rewrite else 'クライアント様コメント')
+            if not section['heading'].strip() or not section['points'] or (not is_rewrite and section['word_count'] <= 0):
                 raise ValueError('Missing heading, outline content or planned character count')
             points = []
             for point in sentences(section['points']):
@@ -224,10 +240,11 @@ def export(payload, output):
             if not urls:
                 urls = ['未取得']
                 report['unavailable'].append(section['heading'] + '：参照URL未取得')
-            for offset in range(max(1, len(points), len(urls))):
+            comments = sentences(section.get('rewrite_comments', [])) if is_rewrite else []
+            for offset in range(max(1, len(points), len(urls), len(comments))):
                 body_row = row + 1 + offset
                 style_row(sheet, sample, body_row, 15 if is_h2 and offset == 0 else 20)
-                if is_h2 and offset == 0: put(sheet, f'B{body_row}', '概要')
+                if (is_rewrite or is_h2) and offset == 0: put(sheet, f'B{body_row}', '現状' if is_rewrite else '概要')
                 if offset < len(points):
                     put(sheet, f'C{body_row}', points[offset])
                     if points[offset].startswith(('（可能なら）','(可能なら)','（表の作成）')):
@@ -241,13 +258,43 @@ def export(payload, output):
                     alignment = copy(sheet[f'E{body_row}'].alignment)
                     alignment.horizontal = 'fill'
                     sheet[f'E{body_row}'].alignment = alignment
+                if is_rewrite:
+                    sheet[f'F{body_row}']._style = copy(sample['E15']._style)
+                    if offset < len(comments):
+                        comment = comments[offset]
+                        if not comment.startswith(('（','(可能なら)','LLMOのため','※LLMO用：')): comment = '※LLMO用：' + comment
+                        put(sheet, f'F{body_row}', comment)
+                        if comment.startswith(('（可能なら）','(可能なら)','（表の作成）')):
+                            font = copy(sheet[f'F{body_row}'].font); font.color = 'FFFF0000'; sheet[f'F{body_row}'].font = font
+                    height = 1
+                    for column in ['C','E','F']:
+                        cell = sheet[f'{column}{body_row}']
+                        alignment = copy(cell.alignment); alignment.wrap_text = True; alignment.vertical = 'top'; alignment.horizontal = 'left'; cell.alignment = alignment
+                        width = max(1, sheet.column_dimensions[column].width-2)
+                        height = max(height, math.ceil(sum(2 if unicodedata.east_asian_width(c) in 'FW' else 1 for c in str(cell.value or '')) / width))
+                    sheet.row_dimensions[body_row].height = min(409.5, max(22, height*16.5+5))
             total += section['word_count']
-            row += max(1, len(points), len(urls)) + 2  # One empty row before the next heading.
+            row += max(1, len(points), len(urls), len(comments)) + 2  # One empty row before the next heading.
             style_row(sheet, sample, row-1, 13)
         for col in range(2,7):
             border = copy(sheet.cell(row-2, col).border)
             border.bottom = copy(sample['C15'].border.bottom)
             sheet.cell(row-2, col).border = border
+        if is_rewrite:
+            totals.append(len(result['sections']))
+            report['mode'] = 'rewrite'
+            report['reference_url'] = result['reference']['url']
+            report['heading_count'] = len(result['sections'])
+            report['limitations'] = result.get('limitations', [])
+            report['intentional_blanks'] = ['空行・余白', '新規の文字数計画・競合調査（リライトでは対象外）']
+            coverage.append(report)
+            for key, cell in list(sheet._cells.items()):
+                cell.comment = None
+                if key[1] > 6 or key[0] > row-2: del sheet._cells[key]
+            for dimension in list(sheet.row_dimensions):
+                if dimension > row-2: del sheet.row_dimensions[dimension]
+            sheet.print_area = f'B2:F{row-2}'
+            continue
         sheet['C4'] = sample['C4'].value
         totals.append(total)
         put(sheet, 'H9', template['H9'].value)

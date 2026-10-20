@@ -64,6 +64,20 @@ try {
  ensure(json_decode($saved['ai_prompts'],true)['origin']==='inferred','inferred questions persisted');
  ensure(count(json_decode($saved['evidence'],true)['gemini']['responses'])===3,'question-level answers persisted');
  ensure(db_one('SELECT status FROM content_jobs WHERE id=?',[$inferred])['status']==='completed','inferred task completes');
+ $rewrite=content_create($uids[0],['mode'=>'rewrite','reference_url'=>'https://example.com/article','keywords'=>'既存ページの調査','ai_prompts'=>'既存ページの情報について教えてください。']);$ids[]=$rewrite;
+ $referenceLoaded=false;$rewriteCalls=0;
+ content_process(db_one('SELECT * FROM content_jobs WHERE id=?',[$rewrite]),static function() use (&$referenceLoaded,&$rewriteCalls) {
+     ensure($referenceLoaded,'reference extracted before paid APIs');$rewriteCalls++;return ['answer_text'=>'実測回答'];
+ },static function($job,$item,$evidence) {
+     ensure($job['mode']==='rewrite'&&$job['reference_url']==='https://example.com/article','rewrite settings persisted');
+     ensure($item['reference']['headings'][0]['heading']==='既存の見出し','reference reaches generation');
+     return content_rewrite_result($job,$item['reference'],['audience'=>'読者','llmo_analysis'=>'実測比較','limitations'=>[], 'sections'=>[['source_index'=>1,'observation'=>'既存本文の説明。','comments'=>['（表の作成）条件を比較する。'],'sources'=>[]]]]);
+ },null,static function() use (&$referenceLoaded) {
+     $referenceLoaded=true;return ['url'=>'https://example.com/article','title'=>'現行タイトル','headings'=>[['level'=>'H2','heading'=>'既存の見出し','word_count'=>0,'id'=>'intro']]];
+ });
+ ensure($rewriteCalls===2&&db_one('SELECT status FROM content_jobs WHERE id=?',[$rewrite])['status']==='completed','rewrite API research and Excel complete');
+ $saved=json_decode(db_one('SELECT result FROM content_items WHERE job_id=?',[$rewrite])['result'],true);
+ ensure($saved['mode']==='rewrite'&&$saved['sections'][0]['heading']==='既存の見出し','original heading persisted');
  ensure(request('/content-generation')[0]===302,'anonymous redirected');ensure(request('/content-generation?download='.$id)[0]===302,'anonymous download denied');
  foreach($emails as $i=>$email){
   $login=request('/?a=login&return=content-generation');$response=request('/?a=login&return=content-generation',['csrf'=>token($login[1]),'email'=>$email,'password'=>$password]);
@@ -79,6 +93,7 @@ try {
    ensure(str_starts_with($download[1],'PK'),'xlsx');
    ensure(request('/content-generation',['keywords'=>'no csrf'])[0]===400,'csrf');
    ensure(request('/content-generation',['csrf'=>token($body),'keywords'=>implode("\n",range(1,11))])[0]===422,'HTTP limit');
+   $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'SEO','mode'=>'rewrite']);ensure($resp[0]===422&&str_contains($resp[1],'参照URL'),'rewrite URL required over HTTP');
    $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'SEO対策とは','ai_prompts'=>"質問1\n質問2\n質問3\n質問4"]);
    ensure($resp[0]===422&&str_contains($resp[1],"質問1\n質問2\n質問3\n質問4"),'prompt limit and retained input');
    $resp=request('/content-generation',['csrf'=>token($body),'keywords'=>'任意項目空欄']);ensure($resp[0]===302,'empty optionals create');
